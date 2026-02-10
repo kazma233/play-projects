@@ -3,14 +3,12 @@ package main
 import (
 	"context"
 	"embed"
+	"io"
+	"io/fs"
 	"log"
-	"mime"
-	"mime/multipart"
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -22,13 +20,8 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/static"
 )
 
-//go:embed templates
-var templatesFS embed.FS
-
-const (
-	cssPath = "./css"
-	jsPath  = "./js"
-)
+//go:embed templates css js
+var assetsFS embed.FS
 
 func main() {
 	// 加载配置
@@ -37,8 +30,8 @@ func main() {
 	// 初始化下载目录
 	mustInitDir(config.DownloadPath)
 
-	// 初始化改进的存储系统
-	ms, err := NewImprovedStorage(config.DownloadPath)
+	// 初始化存储系统
+	ms, err := NewMemoryStorage(config.DownloadPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
@@ -48,8 +41,16 @@ func main() {
 		log.Fatalf("Failed to load data: %v", err)
 	}
 
-	// 启动时清理一次过期数据
-	ms.CleanupExpired(30 * 24 * time.Hour)
+	// 启动时清理过期数据（包含物理文件删除）
+	if err := ms.CleanupExpired(30); err != nil {
+		log.Printf("Initial cleanup failed: %v", err)
+	}
+
+	// 启动时执行一次 compact（在 Load 之后）
+	log.Println("Performing initial compact...")
+	if err := ms.Compact(); err != nil {
+		log.Printf("Initial compact failed: %v", err)
+	}
 
 	// 创建处理器
 	handlers := NewHandlers(ms, config)
@@ -71,19 +72,43 @@ func main() {
 	app.Use(recover.New())
 	app.Use(logger.New())
 	app.Use(requestid.New())
-	app.Use(CORSMiddleware())
+	app.Use(NewCORSMiddleware())
 	app.Use(FileValidationMiddleware(config))
 
 	// 静态文件服务
-	app.Use("/fs", static.New(config.DownloadPath))
-	app.Use("/css", static.New(cssPath))
-	app.Use("/js", static.New(jsPath))
+	app.Use("/fs", static.New(config.DownloadPath)) // 文件上传目录从文件系统读取
+
+	// 从 embed.FS 提供静态资源
+	cssSubFS, err := fs.Sub(assetsFS, "css")
+	if err != nil {
+		log.Fatalf("Failed to create CSS sub filesystem: %v", err)
+	}
+	jsSubFS, err := fs.Sub(assetsFS, "js")
+	if err != nil {
+		log.Fatalf("Failed to create JS sub filesystem: %v", err)
+	}
+	templatesSubFS, err := fs.Sub(assetsFS, "templates")
+	if err != nil {
+		log.Fatalf("Failed to create templates sub filesystem: %v", err)
+	}
+
+	app.Use("/css", static.New("", static.Config{FS: cssSubFS}))
+	app.Use("/js", static.New("", static.Config{FS: jsSubFS}))
 
 	// 路由
-	indexContent, _ := templatesFS.ReadFile("templates/index.html")
+	templatesFile, err := templatesSubFS.Open("index.html")
+	if err != nil {
+		log.Fatalf("Failed to open templates/index.html: %v", err)
+	}
+	templatesContent, err := io.ReadAll(templatesFile)
+	templatesFile.Close()
+	if err != nil {
+		log.Fatalf("Failed to read templates/index.html: %v", err)
+	}
+
 	app.Get("/", func(ctx fiber.Ctx) error {
 		ctx.Set(fiber.HeaderContentType, fiber.MIMETextHTMLCharsetUTF8)
-		return ctx.Send(indexContent)
+		return ctx.Send(templatesContent)
 	})
 
 	// API 路由
@@ -124,24 +149,6 @@ func main() {
 	}
 
 	log.Println("Server exited")
-}
-
-// isImageFileHeader 判断multipart.FileHeader是否为图片
-func isImageFileHeader(fh *multipart.FileHeader) bool {
-	// 获取MIME类型
-	mimeType := mime.TypeByExtension(filepath.Ext(fh.Filename))
-
-	// 常见的图片MIME类型
-	imageTypes := []string{
-		"image/jpeg",
-		"image/png",
-		"image/gif",
-		"image/bmp",
-		"image/webp",
-	}
-
-	// 检查MIME类型是否在图片类型列表中
-	return slices.Contains(imageTypes, mimeType)
 }
 
 func printEndpointInfo(port int) {
