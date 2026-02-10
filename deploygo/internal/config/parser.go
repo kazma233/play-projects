@@ -56,22 +56,6 @@ type CopyToLocalPath struct {
 	EmptyToDir bool   `yaml:"empty_to_dir"`
 }
 
-type CopyPath struct {
-	From string `yaml:"from"`
-	To   string `yaml:"to"`
-}
-
-type VolumeConfig struct {
-	Local string `yaml:"local"`
-	To    string `yaml:"to"`
-}
-
-type CopyConfig struct {
-	Local   string   `yaml:"local"`
-	To      string   `yaml:"to"`
-	Exclude []string `yaml:"exclude"`
-}
-
 type DeploymentStep struct {
 	Name     string   `yaml:"name"`
 	Server   string   `yaml:"server"`

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"deploygo/internal/config"
+	"deploygo/internal/retry"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -58,43 +59,57 @@ func NewSSHExecutor(server *config.ServerConfig) (*SSHExecutor, error) {
 }
 
 func (s *SSHExecutor) Connect() error {
-	var authMethods []ssh.AuthMethod
-
-	if s.config.Password != "" {
-		authMethods = append(authMethods, ssh.Password(s.config.Password))
-	}
-
-	if s.config.KeyPath != "" {
-		keyPath := expandHome(s.config.KeyPath)
-		keyData, err := os.ReadFile(keyPath)
-		if err != nil {
-			return fmt.Errorf("failed to read private key: %w", err)
+	return retry.WithBackoff("SSH连接", func() (error, bool) {
+		// 如果已有连接，先关闭
+		if s.client != nil {
+			s.client.Close()
+			s.client = nil
 		}
 
-		signer, err := ssh.ParsePrivateKey(keyData)
-		if err != nil {
-			return fmt.Errorf("failed to parse private key: %w", err)
+		var authMethods []ssh.AuthMethod
+
+		if s.config.Password != "" {
+			authMethods = append(authMethods, ssh.Password(s.config.Password))
 		}
-		authMethods = append(authMethods, ssh.PublicKeys(signer))
-	}
 
-	if len(authMethods) == 0 {
-		return fmt.Errorf("no authentication method provided")
-	}
+		if s.config.KeyPath != "" {
+			keyPath := expandHome(s.config.KeyPath)
+			keyData, err := os.ReadFile(keyPath)
+			if err != nil {
+				return fmt.Errorf("failed to read private key: %w", err), false
+			}
 
-	host := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-	client, err := ssh.Dial("tcp", host, &ssh.ClientConfig{
-		User:            s.config.User,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         s.config.Timeout,
+			signer, err := ssh.ParsePrivateKey(keyData)
+			if err != nil {
+				return fmt.Errorf("failed to parse private key: %w", err), false
+			}
+			authMethods = append(authMethods, ssh.PublicKeys(signer))
+		}
+
+		if len(authMethods) == 0 {
+			return fmt.Errorf("no authentication method provided"), false
+		}
+
+		host := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+		client, err := ssh.Dial("tcp", host, &ssh.ClientConfig{
+			User:            s.config.User,
+			Auth:            authMethods,
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Timeout:         s.config.Timeout,
+		})
+		if err != nil {
+			// 网络错误可以重试，认证错误不重试
+			errStr := strings.ToLower(err.Error())
+			shouldRetry := strings.Contains(errStr, "connection") ||
+				strings.Contains(errStr, "timeout") ||
+				strings.Contains(errStr, "network") ||
+				strings.Contains(errStr, "handshake")
+			return fmt.Errorf("failed to dial SSH: %w", err), shouldRetry
+		}
+
+		s.client = client
+		return nil, false
 	})
-	if err != nil {
-		return fmt.Errorf("failed to dial SSH: %w", err)
-	}
-
-	s.client = client
-	return nil
 }
 
 func (s *SSHExecutor) Close() {
@@ -104,24 +119,37 @@ func (s *SSHExecutor) Close() {
 }
 
 func (s *SSHExecutor) Execute(command string) ([]byte, error) {
-	if s.client == nil {
-		if err := s.Connect(); err != nil {
-			return nil, err
+	var output []byte
+	err := retry.WithBackoff("SSH命令执行", func() (error, bool) {
+		if s.client == nil {
+			if err := s.Connect(); err != nil {
+				return err, false
+			}
 		}
-	}
 
-	session, err := s.client.NewSession()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
-	}
-	defer session.Close()
+		session, err := s.client.NewSession()
+		if err != nil {
+			// 如果会话创建失败，可能是连接断开，尝试重连
+			errStr := strings.ToLower(err.Error())
+			shouldRetry := strings.Contains(errStr, "connection") ||
+				strings.Contains(errStr, "timeout") ||
+				strings.Contains(errStr, "broken pipe")
+			if shouldRetry {
+				s.client.Close()
+				s.client = nil
+			}
+			return fmt.Errorf("failed to create session: %w", err), shouldRetry
+		}
+		defer session.Close()
 
-	output, err := session.CombinedOutput(command)
-	if err != nil {
-		return output, fmt.Errorf("ssh command failed: %w, output: %s", err, string(output))
-	}
+		output, err = session.CombinedOutput(command)
+		if err != nil {
+			return fmt.Errorf("ssh command failed: %w, output: %s", err, string(output)), false
+		}
 
-	return output, nil
+		return nil, false
+	})
+	return output, err
 }
 
 func (s *SSHExecutor) ExecuteBatch(commands []string) ([]byte, error) {
@@ -157,43 +185,57 @@ func NewSFTPUploader(server *config.ServerConfig) (*SFTPUploader, error) {
 }
 
 func (s *SFTPUploader) Connect() error {
-	var authMethods []ssh.AuthMethod
-
-	if s.config.Password != "" {
-		authMethods = append(authMethods, ssh.Password(s.config.Password))
-	}
-
-	if s.config.KeyPath != "" {
-		keyPath := expandHome(s.config.KeyPath)
-		keyData, err := os.ReadFile(keyPath)
-		if err != nil {
-			return fmt.Errorf("failed to read private key: %w", err)
+	return retry.WithBackoff("SFTP连接", func() (error, bool) {
+		// 如果已有连接，先关闭
+		if s.client != nil {
+			s.client.Close()
+			s.client = nil
 		}
 
-		signer, err := ssh.ParsePrivateKey(keyData)
-		if err != nil {
-			return fmt.Errorf("failed to parse private key: %w", err)
+		var authMethods []ssh.AuthMethod
+
+		if s.config.Password != "" {
+			authMethods = append(authMethods, ssh.Password(s.config.Password))
 		}
-		authMethods = append(authMethods, ssh.PublicKeys(signer))
-	}
 
-	if len(authMethods) == 0 {
-		return fmt.Errorf("no authentication method provided")
-	}
+		if s.config.KeyPath != "" {
+			keyPath := expandHome(s.config.KeyPath)
+			keyData, err := os.ReadFile(keyPath)
+			if err != nil {
+				return fmt.Errorf("failed to read private key: %w", err), false
+			}
 
-	host := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-	client, err := ssh.Dial("tcp", host, &ssh.ClientConfig{
-		User:            s.config.User,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         s.config.Timeout,
+			signer, err := ssh.ParsePrivateKey(keyData)
+			if err != nil {
+				return fmt.Errorf("failed to parse private key: %w", err), false
+			}
+			authMethods = append(authMethods, ssh.PublicKeys(signer))
+		}
+
+		if len(authMethods) == 0 {
+			return fmt.Errorf("no authentication method provided"), false
+		}
+
+		host := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+		client, err := ssh.Dial("tcp", host, &ssh.ClientConfig{
+			User:            s.config.User,
+			Auth:            authMethods,
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Timeout:         s.config.Timeout,
+		})
+		if err != nil {
+			// 网络错误可以重试，认证错误不重试
+			errStr := strings.ToLower(err.Error())
+			shouldRetry := strings.Contains(errStr, "connection") ||
+				strings.Contains(errStr, "timeout") ||
+				strings.Contains(errStr, "network") ||
+				strings.Contains(errStr, "handshake")
+			return fmt.Errorf("failed to dial SSH: %w", err), shouldRetry
+		}
+
+		s.client = client
+		return nil, false
 	})
-	if err != nil {
-		return fmt.Errorf("failed to dial SSH: %w", err)
-	}
-
-	s.client = client
-	return nil
 }
 
 func (s *SFTPUploader) Close() {
@@ -203,30 +245,41 @@ func (s *SFTPUploader) Close() {
 }
 
 func (s *SFTPUploader) Upload(source, dest string, excludes []string) error {
-	if s.client == nil {
-		if err := s.Connect(); err != nil {
-			return err
+	return retry.WithBackoff("文件上传", func() (error, bool) {
+		if s.client == nil {
+			if err := s.Connect(); err != nil {
+				return err, false
+			}
 		}
-	}
 
-	sftpClient, err := sftp.NewClient(s.client)
-	if err != nil {
-		return fmt.Errorf("failed to create SFTP client: %w", err)
-	}
-	defer sftpClient.Close()
+		sftpClient, err := sftp.NewClient(s.client)
+		if err != nil {
+			// 如果SFTP客户端创建失败，可能是连接断开，尝试重连
+			errStr := strings.ToLower(err.Error())
+			shouldRetry := strings.Contains(errStr, "connection") ||
+				strings.Contains(errStr, "timeout") ||
+				strings.Contains(errStr, "broken pipe")
+			if shouldRetry {
+				s.client.Close()
+				s.client = nil
+			}
+			return fmt.Errorf("failed to create SFTP client: %w", err), shouldRetry
+		}
+		defer sftpClient.Close()
 
-	dest = filepath.ToSlash(dest)
+		dest = filepath.ToSlash(dest)
 
-	srcInfo, err := os.Stat(source)
-	if err != nil {
-		return fmt.Errorf("failed to stat source: %w", err)
-	}
+		srcInfo, err := os.Stat(source)
+		if err != nil {
+			return fmt.Errorf("failed to stat source: %w", err), false
+		}
 
-	if srcInfo.IsDir() {
-		return s.uploadDir(sftpClient, source, dest, excludes)
-	}
+		if srcInfo.IsDir() {
+			return s.uploadDir(sftpClient, source, dest, excludes), false
+		}
 
-	return s.uploadFile(sftpClient, source, dest)
+		return s.uploadFile(sftpClient, source, dest), false
+	})
 }
 
 func (s *SFTPUploader) uploadFile(sftp *sftp.Client, source, dest string) error {
