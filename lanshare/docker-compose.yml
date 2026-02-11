@@ -11,7 +11,7 @@ services:
       - LC_DOWNLOAD_PATH=/run/app/download
       - LC_MAX_FILE_SIZE=104857600 # 100MB
     volumes:
-      - lan-connector-data:/run/app/download
+      - lanc-data:/run/app/download
     deploy:
       resources:
         limits:
@@ -23,6 +23,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  lan-connector-data:
+  lanc-data:
     driver: local
-    name: lan-connector-data
+    name: lanc-data

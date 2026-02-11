@@ -1,3 +1,12 @@
 .vscode
 __debug_bin
 *.exe
+.git
+.gitignore
+README.md
+Dockerfile
+.dockerignore
+docker-compose.yml
+download
+.claude
+.DS_Store

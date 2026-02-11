@@ -108,35 +108,7 @@ func (s *MemoryStorage) autoSaveWorker() {
 }
 
 func (s *MemoryStorage) persistItem(ic ItemC) error {
-	log.Printf("persistItem: op=%d, item_id=%s, file=%s", ic.OP, ic.Item.ID, s.storageFile.Name())
-
-	// 打印写入前文件状态
-	beforeOffset, _ := s.storageFile.Seek(0, 1)
-	beforeSize := s.getFileSize()
-	log.Printf("persistItem: before offset=%d, size=%d", beforeOffset, beforeSize)
-
-	data := map[string]interface{}{
-		"op":   ic.OP,
-		"item": ic.Item,
-		"ts":   time.Now().Unix(),
-	}
-
-	encoder := json.NewEncoder(s.storageFile)
-	err := encoder.Encode(data)
-	if err != nil {
-		log.Printf("persistItem encode error: %v", err)
-		return err
-	}
-
-	// 立即 Sync 确保数据写入磁盘
-	if err := s.storageFile.Sync(); err != nil {
-		log.Printf("persistItem sync error: %v", err)
-	}
-
-	// 获取当前文件偏移量
-	offset, _ := s.storageFile.Seek(0, 1)
-	log.Printf("persistItem success: op=%d, item_id=%s, file_offset=%d, actual_size=%d", ic.OP, ic.Item.ID, offset, s.getFileSize())
-	return nil
+	return s.appendRecord(ic.OP, &ic.Item)
 }
 
 func (s *MemoryStorage) Close() error {
@@ -146,33 +118,57 @@ func (s *MemoryStorage) Close() error {
 	return s.storageFile.Close()
 }
 
+// deletePhysicalFile 删除物理文件，成功返回 true
+func (s *MemoryStorage) deletePhysicalFile(item *Item) bool {
+	if item.Type == TEXT {
+		return false
+	}
+
+	saveName, ok1 := item.Meta["saveName"].(string)
+	path, ok2 := item.Meta["path"].(string)
+	if !ok1 || !ok2 {
+		return false
+	}
+
+	filePath := filepath.Join(path, saveName)
+	if err := os.Remove(filePath); err != nil {
+		log.Printf("Failed to delete physical file %s: %v", filePath, err)
+		return false
+	}
+
+	log.Printf("Deleted physical file: %s", filePath)
+	return true
+}
+
 // 添加清理过期数据的方法
 // 实现 IDataOperator 接口
 func (s *MemoryStorage) Add(item *Item) {
 	s.lock.Lock()
-	defer s.lock.Unlock()
-
 	s.items[item.ID] = item
+	s.lock.Unlock()
 
-	// 非阻塞发送，避免死锁
-	select {
-	case s.autoSaveChan <- ItemC{Item: *item, OP: ADD}:
-	default:
-		log.Printf("Warning: autoSaveChan full, ADD operation may be lost")
-	}
+	s.sendToWorker(ItemC{Item: *item, OP: ADD}, "ADD")
 }
 
 func (s *MemoryStorage) Remove(id string) {
 	s.lock.Lock()
-	defer s.lock.Unlock()
-
 	delete(s.items, id)
+	s.lock.Unlock()
 
-	// 非阻塞发送，避免死锁
+	s.sendToWorker(ItemC{Item: Item{ID: id}, OP: REMOVE}, "REMOVE")
+}
+
+// sendToWorker 带超时阻塞发送给 worker
+func (s *MemoryStorage) sendToWorker(ic ItemC, opName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	select {
-	case s.autoSaveChan <- ItemC{Item: Item{ID: id}, OP: REMOVE}:
-	default:
-		log.Printf("Warning: autoSaveChan full, REMOVE operation may be lost")
+	case s.autoSaveChan <- ic:
+	case <-ctx.Done():
+		log.Printf("Warning: persist timeout for %s item %s, data may be lost on restart", opName, ic.Item.ID)
+	case <-s.ctx.Done():
+		// 程序正在关闭，直接返回（内存已更新）
 	}
 }
 
@@ -207,6 +203,7 @@ func (s *MemoryStorage) Len() int {
 	return len(s.items)
 }
 
+// getFileSize 获取当前文件大小
 func (s *MemoryStorage) getFileSize() int64 {
 	info, err := s.storageFile.Stat()
 	if err != nil {
@@ -215,18 +212,40 @@ func (s *MemoryStorage) getFileSize() int64 {
 	return info.Size()
 }
 
-// 实现 IMemoryStorage 接口
-func (s *MemoryStorage) Load() error {
-	log.Printf("Load: file=%s, size_before=%d", s.storageFile.Name(), s.getFileSize())
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	// 重置文件指针到开头
+// resetFilePointer 重置文件指针到文件开头
+func (s *MemoryStorage) resetFilePointer() error {
 	_, err := s.storageFile.Seek(0, 0)
+	return err
+}
+
+// truncateFile 清空文件内容
+func (s *MemoryStorage) truncateFile() error {
+	if err := s.storageFile.Truncate(0); err != nil {
+		return err
+	}
+	return s.resetFilePointer()
+}
+
+// reopenFile 关闭当前文件句柄并重新打开文件
+func (s *MemoryStorage) reopenFile() error {
+	fileName := s.storageFile.Name()
+	s.storageFile.Close()
+	newFile, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %w", err)
+		return fmt.Errorf("failed to reopen file: %w", err)
+	}
+	s.storageFile = newFile
+	return nil
+}
+
+// readAllRecords 读取所有记录并重建状态
+// 返回从文件中解析出的 items map（基于 op 操作重建的最终状态）
+func (s *MemoryStorage) readAllRecords() (map[string]*Item, error) {
+	if err := s.resetFilePointer(); err != nil {
+		return nil, fmt.Errorf("failed to seek file: %w", err)
 	}
 
+	items := make(map[string]*Item)
 	decoder := json.NewDecoder(s.storageFile)
 
 	for {
@@ -252,7 +271,6 @@ func (s *MemoryStorage) Load() error {
 
 		switch op {
 		case ADD:
-			// 完整解析 Item
 			itemBytes, err := json.Marshal(itemData)
 			if err != nil {
 				continue
@@ -261,22 +279,96 @@ func (s *MemoryStorage) Load() error {
 			if err := json.Unmarshal(itemBytes, &item); err != nil {
 				continue
 			}
-			s.items[item.ID] = &item
+			items[item.ID] = &item
 
 		case REMOVE:
-			// REMOVE 操作只需要 ID，不需要完整解析 Item（避免 time.Time 零值问题）
 			if id, ok := itemData["id"].(string); ok {
-				delete(s.items, id)
+				delete(items, id)
 			}
 		}
 	}
 
-	// 读取完成后，重置文件指针到开头
-	if _, err := s.storageFile.Seek(0, 0); err != nil {
-		log.Printf("Load: failed to reset file pointer: %v", err)
+	return items, nil
+}
+
+// atomicReplace 原子替换文件内容
+func (s *MemoryStorage) atomicReplace(items map[string]*Item) error {
+	fileName := s.storageFile.Name()
+	tempFilePath := fileName + ".tmp"
+
+	// 创建临时文件
+	tempFile, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	currentPos, _ := s.storageFile.Seek(0, 1)
-	log.Printf("Load: done, items_loaded=%d, file_pos_after=%d, size=%d", len(s.items), currentPos, s.getFileSize())
+	defer os.Remove(tempFilePath)
+
+	// 写入临时文件
+	if err := writeRecordsToFile(tempFile, items); err != nil {
+		tempFile.Close()
+		return err
+	}
+
+	// 同步并关闭临时文件
+	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+	tempFile.Close()
+
+	// 原子替换
+	if err := os.Rename(tempFilePath, fileName); err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	// 重新打开文件
+	return s.reopenFile()
+}
+
+// writeRecordsToFile 将记录写入指定文件
+func writeRecordsToFile(f *os.File, items map[string]*Item) error {
+	encoder := json.NewEncoder(f)
+	for _, item := range items {
+		data := map[string]interface{}{
+			"op":   ADD,
+			"item": item,
+			"ts":   time.Now().Unix(),
+		}
+		if err := encoder.Encode(data); err != nil {
+			return fmt.Errorf("failed to encode item: %w", err)
+		}
+	}
+	return nil
+}
+
+// appendRecord 追加单条记录到文件
+func (s *MemoryStorage) appendRecord(op OP, item *Item) error {
+	data := map[string]interface{}{
+		"op":   op,
+		"item": item,
+		"ts":   time.Now().Unix(),
+	}
+
+	encoder := json.NewEncoder(s.storageFile)
+	if err := encoder.Encode(data); err != nil {
+		return fmt.Errorf("failed to encode record: %w", err)
+	}
+
+	return s.storageFile.Sync()
+}
+
+func (s *MemoryStorage) Load() error {
+	log.Printf("Load: file=%s, size=%d", s.storageFile.Name(), s.getFileSize())
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	items, err := s.readAllRecords()
+	if err != nil {
+		return err
+	}
+
+	s.items = items
+	log.Printf("Load: done, items_loaded=%d", len(s.items))
 	return nil
 }
 
@@ -287,137 +379,43 @@ func (s *MemoryStorage) CleanupExpired(maxAge int64) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	fileName := s.storageFile.Name()
-
-	// 读取原始文件
-	_, err := s.storageFile.Seek(0, 0)
+	items, err := s.readAllRecords()
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %w", err)
+		return err
 	}
 
-	decoder := json.NewDecoder(s.storageFile)
-
 	cutoff := time.Now().AddDate(0, 0, -int(maxAge))
-	// 收集所有未过期的有效数据
 	validItems := make(map[string]*Item)
-	var expiredCount int
-	var fileDeletedCount int
+	var expiredCount, fileDeletedCount int
 
-	for {
-		var data map[string]interface{}
-		if err := decoder.Decode(&data); err != nil {
-			if err == io.EOF {
-				break
+	for _, item := range items {
+		if item.CreateTime.Before(cutoff) {
+			// 过期了，需要删除物理文件
+			expiredCount++
+			if s.deletePhysicalFile(item) {
+				fileDeletedCount++
 			}
-			log.Printf("Failed to decode line: %v", err)
-			continue
-		}
-
-		opFloat, ok := data["op"].(float64)
-		if !ok {
-			continue
-		}
-		op := OP(opFloat)
-
-		itemData, ok := data["item"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		itemBytes, err := json.Marshal(itemData)
-		if err != nil {
-			continue
-		}
-
-		var item Item
-		if err := json.Unmarshal(itemBytes, &item); err != nil {
-			continue
-		}
-
-		switch op {
-		case ADD:
-			if item.CreateTime.Before(cutoff) {
-				// 过期了，需要删除物理文件
-				expiredCount++
-				if item.Type != TEXT {
-					if saveName, ok := item.Meta["saveName"].(string); ok {
-						if path, ok := item.Meta["path"].(string); ok {
-							filePath := filepath.Join(path, saveName)
-							if err := os.Remove(filePath); err != nil {
-								log.Printf("Failed to delete expired file %s: %v", filePath, err)
-							} else {
-								fileDeletedCount++
-								log.Printf("Deleted expired file: %s", filePath)
-							}
-						}
-					}
-				}
-			} else {
-				validItems[item.ID] = &item
-			}
-		case REMOVE:
-			delete(validItems, item.ID)
+		} else {
+			validItems[item.ID] = item
 		}
 	}
 
 	// 如果没有有效数据，直接清空文件
 	if len(validItems) == 0 {
-		if err := s.storageFile.Truncate(0); err != nil {
+		if err := s.truncateFile(); err != nil {
 			return fmt.Errorf("failed to truncate file: %w", err)
 		}
-		if _, err := s.storageFile.Seek(0, 0); err != nil {
-			return fmt.Errorf("failed to seek file: %w", err)
-		}
-		if expiredCount > 0 {
-			log.Printf("CleanupExpired: cleared all data, %d expired items removed", expiredCount)
-		}
+		log.Printf("CleanupExpired: cleared all data, %d expired items removed", expiredCount)
 		return nil
 	}
 
-	// 创建临时文件
-	tempFilePath := fileName + ".tmp"
-	tempFile, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer tempFile.Close()
-
-	// 重新写入所有未过期的有效数据
-	encoder := json.NewEncoder(tempFile)
-	for _, item := range validItems {
-		data := map[string]interface{}{
-			"op":   ADD,
-			"item": item,
-			"ts":   time.Now().Unix(),
-		}
-		if err := encoder.Encode(data); err != nil {
-			os.Remove(tempFilePath)
-			return fmt.Errorf("failed to encode item: %w", err)
-		}
+	// 原子替换文件
+	if err := s.atomicReplace(validItems); err != nil {
+		return err
 	}
 
-	// 同步临时文件
-	if err := tempFile.Sync(); err != nil {
-		os.Remove(tempFilePath)
-		return fmt.Errorf("failed to sync temp file: %w", err)
-	}
-	tempFile.Close()
-
-	// 重命名临时文件（原子操作）
-	if err := os.Rename(tempFilePath, fileName); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-
-	// 重置主文件指针
-	if _, err := s.storageFile.Seek(0, 0); err != nil {
-		return fmt.Errorf("failed to seek file after cleanup: %w", err)
-	}
-
-	if expiredCount > 0 {
-		log.Printf("CleanupExpired: %d expired items removed, %d physical files deleted, %d items retained, new_size=%d",
-			expiredCount, fileDeletedCount, len(validItems), s.getFileSize())
-	}
-
+	log.Printf("CleanupExpired: %d expired items, %d files deleted, %d retained",
+		expiredCount, fileDeletedCount, len(validItems))
 	return nil
 }
 
@@ -442,111 +440,26 @@ func (s *MemoryStorage) Compact() error {
 		return nil
 	}
 
-	// 读取原始文件
-	_, err = s.storageFile.Seek(0, 0)
+	// 读取所有记录
+	validItems, err := s.readAllRecords()
 	if err != nil {
-		return fmt.Errorf("failed to seek file: %w", err)
-	}
-
-	decoder := json.NewDecoder(s.storageFile)
-
-	// 收集所有有效的 ADD 操作（去重，保留最后一条）
-	validItems := make(map[string]*Item)
-	var removedCount int
-
-	for {
-		var data map[string]interface{}
-		if err := decoder.Decode(&data); err != nil {
-			if err == io.EOF {
-				break
-			}
-			log.Printf("Failed to decode line: %v", err)
-			continue
-		}
-
-		opFloat, ok := data["op"].(float64)
-		if !ok {
-			continue
-		}
-		op := OP(opFloat)
-
-		itemData, ok := data["item"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		itemBytes, err := json.Marshal(itemData)
-		if err != nil {
-			continue
-		}
-
-		var item Item
-		if err := json.Unmarshal(itemBytes, &item); err != nil {
-			continue
-		}
-
-		switch op {
-		case ADD:
-			validItems[item.ID] = &item
-		case REMOVE:
-			if _, existed := validItems[item.ID]; existed {
-				removedCount++
-			}
-			delete(validItems, item.ID)
-		}
+		return err
 	}
 
 	// 如果没有有效数据，直接清空文件
 	if len(validItems) == 0 {
-		if err := s.storageFile.Truncate(0); err != nil {
+		if err := s.truncateFile(); err != nil {
 			return fmt.Errorf("failed to truncate file: %w", err)
-		}
-		if _, err := s.storageFile.Seek(0, 0); err != nil {
-			return fmt.Errorf("failed to seek file: %w", err)
 		}
 		log.Println("Compacted storage file: cleared all data")
 		return nil
 	}
 
-	// 创建临时文件
-	tempFilePath := fileName + ".tmp"
-	tempFile, err := os.OpenFile(tempFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	defer tempFile.Close()
-
-	// 重新写入所有有效数据
-	encoder := json.NewEncoder(tempFile)
-	for _, item := range validItems {
-		data := map[string]interface{}{
-			"op":   ADD,
-			"item": item,
-			"ts":   time.Now().Unix(),
-		}
-		if err := encoder.Encode(data); err != nil {
-			os.Remove(tempFilePath)
-			return fmt.Errorf("failed to encode item: %w", err)
-		}
+	// 原子替换文件
+	if err := s.atomicReplace(validItems); err != nil {
+		return err
 	}
 
-	// 同步临时文件
-	if err := tempFile.Sync(); err != nil {
-		os.Remove(tempFilePath)
-		return fmt.Errorf("failed to sync temp file: %w", err)
-	}
-	tempFile.Close()
-
-	// 重命名临时文件（原子操作）
-	if err := os.Rename(tempFilePath, fileName); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-
-	// 重置主文件指针
-	if _, err := s.storageFile.Seek(0, 0); err != nil {
-		return fmt.Errorf("failed to seek file after compact: %w", err)
-	}
-
-	log.Printf("Compacted storage file: %d items retained, %d removed, new_size=%d", len(validItems), removedCount, s.getFileSize())
+	log.Printf("Compacted storage file: %d items retained, new_size=%d", len(validItems), s.getFileSize())
 	return nil
 }
