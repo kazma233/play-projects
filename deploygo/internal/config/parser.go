@@ -11,62 +11,66 @@ import (
 const WorkspaceDir = "workspace"
 
 type Config struct {
-	Builds    []StageConfig           `yaml:"builds"`
-	Deploys   []DeploymentStep        `yaml:"deploys"`
-	Container ContainerConfig         `yaml:"container"`
-	Servers   map[string]ServerConfig `yaml:"servers"`
-	Clone     *CloneConfig            `yaml:"clone,omitempty"`
+	Builds    []StageConfig           `yaml:"builds"`            // 构建阶段配置
+	Deploys   []DeploymentStep        `yaml:"deploys"`           // 部署步骤配置
+	Container ContainerConfig         `yaml:"container"`         // 容器配置
+	Servers   map[string]ServerConfig `yaml:"servers"`           // 服务器配置
+	Clone     *CloneConfig            `yaml:"clone,omitempty"`   // Git克隆配置
+	Cleanup   *CleanupConfig          `yaml:"cleanup,omitempty"` // 清理配置
 }
 
 type CloneConfig struct {
-	URL    string `yaml:"url"`
-	Branch string `yaml:"branch"`
+	URL    string `yaml:"url"`    // Git仓库URL
+	Branch string `yaml:"branch"` // Git分支
 }
 
 type ContainerConfig struct {
-	Type string `yaml:"type"`
+	Type string `yaml:"type"` // 容器类型：docker / podman
 }
 
 type ServerConfig struct {
-	Host     string `yaml:"host"`
-	User     string `yaml:"user"`
-	Port     int    `yaml:"port"`
-	KeyPath  string `yaml:"key_path"`
-	Password string `yaml:"password"`
+	Host     string `yaml:"host"`     // 服务器地址
+	User     string `yaml:"user"`     // SSH用户名
+	Port     int    `yaml:"port"`     // SSH端口
+	KeyPath  string `yaml:"key_path"` // SSH私钥路径
+	Password string `yaml:"password"` // SSH密码（可选）
 }
 
 type StageConfig struct {
-	Name            string                `yaml:"name"`
-	Image           string                `yaml:"image"`
-	WorkingDir      string                `yaml:"working_dir"`
-	Environment     []string              `yaml:"environment"`
-	CopyToContainer []CopyToContainerPath `yaml:"copy_to_container"`
-	CopyToLocal     []CopyToLocalPath     `yaml:"copy_to_local"`
-	Commands        []string              `yaml:"commands"`
+	Name            string                `yaml:"name"`              // 阶段名称
+	Image           string                `yaml:"image"`             // 容器镜像
+	WorkingDir      string                `yaml:"working_dir"`       // 容器内工作目录
+	Environment     []string              `yaml:"environment"`       // 环境变量
+	CopyToContainer []CopyToContainerPath `yaml:"copy_to_container"` // 复制到容器的文件
+	CopyToLocal     []CopyToLocalPath     `yaml:"copy_to_local"`     // 复制到本地的文件
+	Commands        []string              `yaml:"commands"`          // 执行命令
 }
 
 type CopyToContainerPath struct {
-	From  string `yaml:"from"`
-	ToDir string `yaml:"to_dir"`
+	From  string `yaml:"from"`   // 本地源路径（相对于项目目录）
+	ToDir string `yaml:"to_dir"` // 容器内目标目录
 }
 
 type CopyToLocalPath struct {
-	From       string `yaml:"from"`
-	ToDir      string `yaml:"to_dir"`
-	EmptyToDir bool   `yaml:"empty_to_dir"`
+	From       string `yaml:"from"`         // 容器内源路径
+	ToDir      string `yaml:"to_dir"`       // 本地目标目录（相对于项目目录）
+	EmptyToDir bool   `yaml:"empty_to_dir"` // 是否在复制前清空目标目录
 }
 
 type DeploymentStep struct {
-	Name     string   `yaml:"name"`
-	Server   string   `yaml:"server"`
-	Commands []string `yaml:"commands"`
-	From     string   `yaml:"from"`
-	To       string   `yaml:"to"` // file or path 和 from一致
+	Name     string   `yaml:"name"`     // 步骤名称
+	Server   string   `yaml:"server"`   // 引用的服务器名称
+	Commands []string `yaml:"commands"` // 远程执行命令
+	From     string   `yaml:"from"`     // 本地源路径（相对于项目目录）
+	To       string   `yaml:"to"`       // 远程目标路径，支持绝对路径和相对路径
+	// 绝对路径：如 /opt/myapp/
+	// 相对路径：如 ./myapp/（相对于用户 home 目录）
+	// 注意：不支持 ~/myapp/ 写法，会在远程创建名为 "~/myapp/" 的目录
 }
 
 type ConfigInfo struct {
-	DirName  string
-	FilePath string
+	DirName  string // 项目目录名称
+	FilePath string // 配置文件路径
 }
 
 func LoadConfigInfo(workspaceDir string) ([]ConfigInfo, error) {
@@ -155,4 +159,9 @@ func GetServer(cfg *Config, name string) *ServerConfig {
 		return &server
 	}
 	return nil
+}
+
+type CleanupConfig struct {
+	Enable bool     `yaml:"enable"` // 是否执行清理，设为 true 会删除 source 目录
+	Dirs   []string `yaml:"dirs"`   // 额外清理的目录，相对于 workspace/<project>/
 }

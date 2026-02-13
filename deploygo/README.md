@@ -6,7 +6,7 @@ DeployGo 是一个轻量级的 CI/CD 工具，使用容器（Docker/Podman）进
 
 | 命令 | 说明 |
 |------|------|
-| `deploygo pipeline` | 执行完整的构建+部署流程（包含 write + build + deploy） |
+| `deploygo pipeline` | 执行完整的构建+部署流程（包含 write + build + deploy + cleanup） |
 | `deploygo build` | 使用容器执行构建任务 |
 | `deploygo deploy` | 部署应用到远程服务器 |
 | `deploygo write` | 将 overlays 目录文件复制到 source 目录 |
@@ -130,6 +130,13 @@ deploys:
     # to:   远程服务器的绝对路径
     from: output/         # 传输 config.yaml 所在目录/output/ 目录下的内容
     to: /opt/myapp/
+
+# ========== 清理配置 ==========
+cleanup:
+  enable: true          # 是否执行清理，设为 true 会删除 source 目录
+  dirs:                 # 要额外清理的目录
+    - temp
+    - cache
 ```
 
 ### 路径规则说明
@@ -279,6 +286,21 @@ deploygo -P myproject pipeline
 1. 执行 `write` 复制 overlays 到 source
 2. 执行所有 build 阶段
 3. 执行所有 deploy 步骤
+4. 执行 `cleanup` 清理任务（如果配置了 cleanup）
+
+### deploygo pipeline
+
+执行完整的构建和部署流程。
+
+```bash
+deploygo -P myproject pipeline
+```
+
+执行顺序：
+1. 执行 `write` 复制 overlays 到 source
+2. 执行所有 build 阶段
+3. 执行所有 deploy 步骤
+4. 执行 `cleanup` 清理任务（如果配置了 cleanup）
 
 ### deploygo write
 
@@ -338,7 +360,14 @@ deploygo list
 5. **环境变量**：
    - 配置文件中支持 `$VAR` 和 `${VAR}` 格式的环境变量展开
 
-6. **Windows 注意事项**：
+6. **Cleanup 清理机制**：
+   - 在 pipeline 执行完成后自动执行
+   - 需要设置 `enable: true` 才会执行
+   - 总是清理 `source` 目录
+   - 可通过 `dirs` 配置额外清理的目录
+   - 路径基于 `workspace/<project>/`
+
+7. **Windows 注意事项**：
    - 本地开发可在 Windows 上运行
    - 远程服务器必须是 Linux
 

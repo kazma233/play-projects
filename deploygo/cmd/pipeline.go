@@ -89,6 +89,13 @@ var PipelineCmd = &cobra.Command{
 			}
 		}
 
+		if cfg.Cleanup != nil {
+			log.Println("=== Running Cleanup Tasks ===")
+			if err := stage.RunCleanup(cfg.Cleanup, projectDir); err != nil {
+				log.Fatalf("Failed to run cleanup tasks: %v", err)
+			}
+		}
+
 		log.Println("Pipeline completed successfully!")
 	},
 }
