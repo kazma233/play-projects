@@ -120,36 +120,33 @@ func (s *SSHExecutor) Close() {
 
 func (s *SSHExecutor) Execute(command string) ([]byte, error) {
 	var output []byte
-	err := retry.WithBackoff("SSH命令执行", func() (error, bool) {
-		if s.client == nil {
-			if err := s.Connect(); err != nil {
-				return err, false
-			}
-		}
 
-		session, err := s.client.NewSession()
-		if err != nil {
-			// 如果会话创建失败，可能是连接断开，尝试重连
-			errStr := strings.ToLower(err.Error())
-			shouldRetry := strings.Contains(errStr, "connection") ||
-				strings.Contains(errStr, "timeout") ||
-				strings.Contains(errStr, "broken pipe")
-			if shouldRetry {
-				s.client.Close()
-				s.client = nil
-			}
-			return fmt.Errorf("failed to create session: %w", err), shouldRetry
+	if s.client == nil {
+		if err := s.Connect(); err != nil {
+			return nil, err
 		}
-		defer session.Close()
+	}
 
-		output, err = session.CombinedOutput(command)
-		if err != nil {
-			return fmt.Errorf("ssh command failed: %w, output: %s", err, string(output)), false
+	session, err := s.client.NewSession()
+	if err != nil {
+		errStr := strings.ToLower(err.Error())
+		shouldRetry := strings.Contains(errStr, "connection") ||
+			strings.Contains(errStr, "timeout") ||
+			strings.Contains(errStr, "broken pipe")
+		if shouldRetry {
+			s.client.Close()
+			s.client = nil
 		}
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	defer session.Close()
 
-		return nil, false
-	})
-	return output, err
+	output, err = session.CombinedOutput(command)
+	if err != nil {
+		return nil, fmt.Errorf("ssh command failed: %w, output: %s", err, string(output))
+	}
+
+	return output, nil
 }
 
 func (s *SSHExecutor) ExecuteBatch(commands []string) ([]byte, error) {

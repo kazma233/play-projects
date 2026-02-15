@@ -3,6 +3,7 @@ package retry
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 )
 
@@ -18,11 +19,19 @@ const (
 func WithBackoff(operation string, fn func() (error, bool)) error {
 	var lastErr error
 	interval := DefaultRetryInterval
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	for i := 0; i <= DefaultRetryCount; i++ {
+	for i := 0; i < DefaultRetryCount; i++ {
+		if i == 0 {
+			log.Printf("[%s] 开始执行...", operation)
+		}
+
 		if i > 0 {
-			log.Printf("%s 失败，第 %d 次重试，等待 %v...", operation, i, interval)
-			time.Sleep(interval)
+			jitter := time.Duration(r.Int63n(int64(interval)))
+			actualWait := interval + jitter
+
+			log.Printf("[%s] 执行失败，第 %d 次重试，等待 %v...", operation, i, actualWait)
+			time.Sleep(actualWait)
 			interval *= 2
 			if interval > MaxRetryInterval {
 				interval = MaxRetryInterval
@@ -31,13 +40,17 @@ func WithBackoff(operation string, fn func() (error, bool)) error {
 
 		err, shouldRetry := fn()
 		if err == nil {
+			log.Printf("[%s] 执行成功", operation)
 			return nil
 		}
 
+		log.Printf("[%s] 执行失败: %v, 是否重试: %v", operation, err, shouldRetry)
 		lastErr = err
 		if !shouldRetry {
+			log.Printf("[%s] 不可重试，终止", operation)
 			return err
 		}
 	}
+	log.Printf("[%s] 重试 %d 次后仍然失败: %v", operation, DefaultRetryCount, lastErr)
 	return fmt.Errorf("%s 重试 %d 次后仍然失败: %w", operation, DefaultRetryCount, lastErr)
 }
