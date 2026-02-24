@@ -47,7 +47,7 @@ func (e *EmailService) SendVerificationCode(to, code string, expiresIn int) erro
 		return nil
 	}
 
-	tmplPath, err := filepath.Abs("../../templates/emails/verification.html")
+	tmplPath, err := filepath.Abs("templates/emails/verification.html")
 	if err != nil {
 		return fmt.Errorf("获取模板路径失败: %w", err)
 	}
