@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"deploygo/internal/config"
 	"deploygo/internal/deploy"
+	"deploygo/internal/fileutil"
 )
 
 func RunDeploys(cfg *config.Config, deploys []config.DeploymentStep, projectDir string) error {
@@ -58,7 +58,10 @@ func runSSHStep(server *config.ServerConfig, step *config.DeploymentStep) error 
 }
 
 func runTransferStep(server *config.ServerConfig, step *config.DeploymentStep, projectDir string) error {
-	source := filepath.Join(projectDir, step.From)
+	source, err := fileutil.ResolveWithin(projectDir, step.From)
+	if err != nil {
+		return fmt.Errorf("invalid deploy source path: %w", err)
+	}
 	dest := step.To
 
 	if source == "" || dest == "" {

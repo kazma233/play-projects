@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"deploygo/internal/config"
+	"deploygo/internal/fileutil"
 )
 
 func RunCleanup(cleanup *config.CleanupConfig, projectDir string) error {
@@ -24,7 +24,10 @@ func RunCleanup(cleanup *config.CleanupConfig, projectDir string) error {
 	cleanupDirs := append(defaultDirs, cleanup.Dirs...)
 
 	for _, dir := range cleanupDirs {
-		targetDir := filepath.Join(projectDir, dir)
+		targetDir, err := fileutil.ResolveWithin(projectDir, dir)
+		if err != nil {
+			return fmt.Errorf("invalid cleanup directory: %w", err)
+		}
 		log.Printf("Removing directory: %s", targetDir)
 		if err := os.RemoveAll(targetDir); err != nil {
 			return fmt.Errorf("failed to remove directory %s: %w", targetDir, err)

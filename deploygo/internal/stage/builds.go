@@ -4,6 +4,7 @@ import (
 	"context"
 	"deploygo/internal/config"
 	"deploygo/internal/container"
+	"deploygo/internal/fileutil"
 	"fmt"
 	"io"
 	"log"
@@ -11,8 +12,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-
-	"github.com/gobwas/glob"
 )
 
 func RunBuilds(runtime container.ContainerRuntime, cfg *config.Config, builds []config.StageConfig, projectDir string) error {
@@ -62,14 +61,19 @@ func RunBuilds(runtime container.ContainerRuntime, cfg *config.Config, builds []
 		}
 
 		for _, cp := range build.CopyToContainer {
-			files := globFiles(cp.From, projectDir)
-			for _, src := range files {
+			if err := fileutil.EnsurePatternWithin(projectDir, cp.From); err != nil {
+				return fmt.Errorf("invalid copy_to_container path: %w", err)
+			}
+			if err := fileutil.GlobFiles(cp.From, projectDir, func(src string) error {
 				srcAbs := filepath.Join(projectDir, src)
 				dst := path.Join(cp.ToDir, filepath.Base(src))
 				log.Printf("Copying %s -> %s:%s", srcAbs, containerID[:12], dst)
 				if err := runtime.CopyToContainer(ctx, containerID, srcAbs, dst); err != nil {
 					return fmt.Errorf("failed to copy to container: %w", err)
 				}
+				return nil
+			}); err != nil {
+				return err
 			}
 		}
 
@@ -86,7 +90,10 @@ func RunBuilds(runtime container.ContainerRuntime, cfg *config.Config, builds []
 		}
 
 		for _, cp := range build.CopyToLocal {
-			toAbs := filepath.Join(projectDir, cp.ToDir)
+			toAbs, err := fileutil.ResolveWithin(projectDir, cp.ToDir)
+			if err != nil {
+				return fmt.Errorf("invalid copy_to_local path: %w", err)
+			}
 			if err := os.MkdirAll(toAbs, 0755); err != nil {
 				return fmt.Errorf("failed to create output directory: %w", err)
 			}
@@ -118,76 +125,4 @@ func RunBuilds(runtime container.ContainerRuntime, cfg *config.Config, builds []
 	}
 
 	return nil
-}
-
-func globFiles(pattern, projectDir string) []string {
-	normalizedPattern := filepath.ToSlash(pattern)
-
-	if strings.HasSuffix(normalizedPattern, "/") {
-		fullPath := filepath.Join(projectDir, normalizedPattern)
-		if _, err := os.Stat(filepath.FromSlash(fullPath)); err == nil {
-			return []string{normalizedPattern}
-		}
-	}
-
-	g, err := glob.Compile(normalizedPattern)
-	if err != nil {
-		return []string{pattern}
-	}
-
-	var files []string
-	baseDir := filepath.ToSlash(filepath.Dir(normalizedPattern))
-	if baseDir == "." || baseDir == "" {
-		baseDir = "."
-	} else {
-		baseDir = filepath.Join(projectDir, baseDir)
-	}
-
-	entries, err := os.ReadDir(filepath.FromSlash(baseDir))
-	if err != nil {
-		return []string{pattern}
-	}
-
-	for _, entry := range entries {
-		fullPath := filepath.ToSlash(filepath.Join(filepath.FromSlash(baseDir), entry.Name()))
-
-		if entry.IsDir() {
-			files = append(files, globFilesRecursive(fullPath, g, projectDir)...)
-		} else {
-			if g.Match(fullPath) {
-				relPath, _ := filepath.Rel(projectDir, fullPath)
-				relPath = filepath.ToSlash(relPath)
-				files = append(files, relPath)
-			}
-		}
-	}
-
-	if len(files) == 0 {
-		return []string{pattern}
-	}
-	return files
-}
-
-func globFilesRecursive(dir string, g glob.Glob, projectDir string) []string {
-	var files []string
-
-	entries, err := os.ReadDir(filepath.FromSlash(dir))
-	if err != nil {
-		return nil
-	}
-
-	for _, entry := range entries {
-		fullPath := filepath.ToSlash(filepath.Join(filepath.FromSlash(dir), entry.Name()))
-		if entry.IsDir() {
-			files = append(files, globFilesRecursive(fullPath, g, projectDir)...)
-		} else {
-			if g.Match(fullPath) {
-				relPath, _ := filepath.Rel(projectDir, fullPath)
-				relPath = filepath.ToSlash(relPath)
-				files = append(files, relPath)
-			}
-		}
-	}
-
-	return files
 }
