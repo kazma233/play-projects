@@ -25,15 +25,15 @@ type ImageRepositoryInterface interface {
 	GetOrCreateSyncTag() (*model.Tag, error)
 }
 
-type ImageRepository struct {
+type imageRepository struct {
 	tx *sql.Tx
 }
 
-func NewImageRepository(tx *sql.Tx) *ImageRepository {
-	return &ImageRepository{tx: tx}
+func NewImageRepository(tx *sql.Tx) ImageRepositoryInterface {
+	return &imageRepository{tx: tx}
 }
 
-func (r *ImageRepository) CreateImage(image *model.Image) (int64, error) {
+func (r *imageRepository) CreateImage(image *model.Image) (int64, error) {
 	result, err := r.tx.Exec(`
 		INSERT INTO images (
 			path, url, sha,
@@ -60,7 +60,7 @@ func (r *ImageRepository) CreateImage(image *model.Image) (int64, error) {
 	return id, nil
 }
 
-func (r *ImageRepository) AddImageTags(imageID int64, tagIDs []int) error {
+func (r *imageRepository) AddImageTags(imageID int64, tagIDs []int) error {
 	for _, tagID := range tagIDs {
 		_, err := r.tx.Exec(`INSERT INTO image_tags (image_id, tag_id) VALUES (?, ?)`, imageID, tagID)
 		if err != nil {
@@ -70,7 +70,7 @@ func (r *ImageRepository) AddImageTags(imageID int64, tagIDs []int) error {
 	return nil
 }
 
-func (r *ImageRepository) DeleteImageTags(imageID int64) error {
+func (r *imageRepository) DeleteImageTags(imageID int64) error {
 	_, err := r.tx.Exec(`DELETE FROM image_tags WHERE image_id = ?`, imageID)
 	if err != nil {
 		return fmt.Errorf("删除标签关联失败: %w", err)
@@ -78,7 +78,7 @@ func (r *ImageRepository) DeleteImageTags(imageID int64) error {
 	return nil
 }
 
-func (r *ImageRepository) GetImages(page, limit int, tagID *int) ([]*model.Image, int, error) {
+func (r *imageRepository) GetImages(page, limit int, tagID *int) ([]*model.Image, int, error) {
 	offset := (page - 1) * limit
 
 	var args []interface{}
@@ -183,7 +183,7 @@ func (r *ImageRepository) GetImages(page, limit int, tagID *int) ([]*model.Image
 	return images, total, nil
 }
 
-func (r *ImageRepository) GetImageByID(id int64) (*model.Image, error) {
+func (r *imageRepository) GetImageByID(id int64) (*model.Image, error) {
 	img := &model.Image{}
 
 	err := r.tx.QueryRow(`
@@ -233,7 +233,7 @@ func (r *ImageRepository) GetImageByID(id int64) (*model.Image, error) {
 	return img, nil
 }
 
-func (r *ImageRepository) SoftDeleteImage(id int64) error {
+func (r *imageRepository) SoftDeleteImage(id int64) error {
 	_, err := r.tx.Exec(`UPDATE images SET deleted_at = ? WHERE id = ?`, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("删除图片失败: %w", err)
@@ -241,7 +241,7 @@ func (r *ImageRepository) SoftDeleteImage(id int64) error {
 	return nil
 }
 
-func (r *ImageRepository) UpdateImageTags(imageID int64, tagIDs []int) error {
+func (r *imageRepository) UpdateImageTags(imageID int64, tagIDs []int) error {
 	_, err := r.tx.Exec(`DELETE FROM image_tags WHERE image_id = ?`, imageID)
 	if err != nil {
 		return fmt.Errorf("删除旧标签失败: %w", err)
@@ -256,7 +256,7 @@ func (r *ImageRepository) UpdateImageTags(imageID int64, tagIDs []int) error {
 	return nil
 }
 
-func (r *ImageRepository) GetTagsByImageID(imageID int64) ([]*model.Tag, error) {
+func (r *imageRepository) GetTagsByImageID(imageID int64) ([]*model.Tag, error) {
 	rows, err := r.tx.Query(`
 		SELECT t.id, t.name, t.color, t.created_at
 		FROM tags t
@@ -299,7 +299,7 @@ func int64sToInterfaces(nums ...int64) []interface{} {
 	return interfaces
 }
 
-func (r *ImageRepository) GetAllImagesNotDeleted() ([]*model.Image, error) {
+func (r *imageRepository) GetAllImagesNotDeleted() ([]*model.Image, error) {
 	query := `
 		SELECT id, path, url, sha,
 			   thumbnail_path, thumbnail_url, thumbnail_sha,
@@ -336,7 +336,7 @@ func (r *ImageRepository) GetAllImagesNotDeleted() ([]*model.Image, error) {
 	return images, nil
 }
 
-func (r *ImageRepository) FindByPath(path string) (*model.Image, error) {
+func (r *imageRepository) FindByPath(path string) (*model.Image, error) {
 	img := &model.Image{}
 	err := r.tx.QueryRow(`
 		SELECT id, path, url, sha,
@@ -364,7 +364,7 @@ func (r *ImageRepository) FindByPath(path string) (*model.Image, error) {
 	return img, nil
 }
 
-func (r *ImageRepository) UpdateImageMeta(id int64, sha string, size *int64, width *int, height *int) error {
+func (r *imageRepository) UpdateImageMeta(id int64, sha string, size *int64, width *int, height *int) error {
 	_, err := r.tx.Exec(`UPDATE images SET sha = ?, size = ?, width = ?, height = ?, updated_at = NOW() WHERE id = ?`, sha, size, width, height, id)
 	if err != nil {
 		return fmt.Errorf("更新图片元数据失败: %w", err)
@@ -372,7 +372,7 @@ func (r *ImageRepository) UpdateImageMeta(id int64, sha string, size *int64, wid
 	return nil
 }
 
-func (r *ImageRepository) UpdateThumbnailMeta(id int64, thumbnailPath, thumbnailURL, thumbnailSHA string, thumbnailSize *int64, thumbnailWidth, thumbnailHeight *int) error {
+func (r *imageRepository) UpdateThumbnailMeta(id int64, thumbnailPath, thumbnailURL, thumbnailSHA string, thumbnailSize *int64, thumbnailWidth, thumbnailHeight *int) error {
 	_, err := r.tx.Exec(`
 		UPDATE images
 		SET thumbnail_path = ?, thumbnail_url = ?, thumbnail_sha = ?, thumbnail_size = ?, has_thumbnail = 1, thumbnail_width = ?, thumbnail_height = ?
@@ -384,7 +384,7 @@ func (r *ImageRepository) UpdateThumbnailMeta(id int64, thumbnailPath, thumbnail
 	return nil
 }
 
-func (r *ImageRepository) UpdateWatermarkMeta(id int64, watermarkPath, watermarkURL, watermarkSHA string, watermarkSize *int64) error {
+func (r *imageRepository) UpdateWatermarkMeta(id int64, watermarkPath, watermarkURL, watermarkSHA string, watermarkSize *int64) error {
 	_, err := r.tx.Exec(`
 		UPDATE images
 		SET watermark_path = ?, watermark_url = ?, watermark_sha = ?, watermark_size = ?, has_watermark = 1
@@ -396,7 +396,7 @@ func (r *ImageRepository) UpdateWatermarkMeta(id int64, watermarkPath, watermark
 	return nil
 }
 
-func (r *ImageRepository) GetOrCreateSyncTag() (*model.Tag, error) {
+func (r *imageRepository) GetOrCreateSyncTag() (*model.Tag, error) {
 	tag := &model.Tag{}
 	err := r.tx.QueryRow(`SELECT id, name, color, created_at FROM tags WHERE name = '同步'`).Scan(
 		&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt,

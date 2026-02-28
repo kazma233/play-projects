@@ -8,15 +8,24 @@ import (
 	"picstash/internal/model"
 )
 
-type SyncLogRepository struct {
+type SyncLogRepositoryInterface interface {
+	CreateSyncLog(triggeredBy string, startedAt time.Time) (int64, error)
+	UpdateSyncLog(id int64, completedAt *time.Time, totalFiles, processedFiles, errorCount int, errorMessage *string, status string) error
+	CreateSyncFileLog(syncLogID int64, path, action, status string, sha, oldSha *string, size, oldSize *int64, errorMessage *string) error
+	GetSyncFilesByLogID(syncLogID int64) ([]*model.SyncFileLog, error)
+	GetAllSyncLogs(limit, offset int) ([]*model.SyncLog, error)
+	GetSyncLogCount() (int, error)
+}
+
+type syncLogRepository struct {
 	tx *sql.Tx
 }
 
-func NewSyncLogRepository(tx *sql.Tx) *SyncLogRepository {
-	return &SyncLogRepository{tx: tx}
+func NewSyncLogRepository(tx *sql.Tx) SyncLogRepositoryInterface {
+	return &syncLogRepository{tx: tx}
 }
 
-func (r *SyncLogRepository) CreateSyncLog(triggeredBy string, startedAt time.Time) (int64, error) {
+func (r *syncLogRepository) CreateSyncLog(triggeredBy string, startedAt time.Time) (int64, error) {
 	result, err := r.tx.Exec(`
 		INSERT INTO sync_logs (triggered_by, started_at, status, total_files, processed_files, error_count)
 		VALUES (?, ?, 'running', 0, 0, 0)
@@ -31,7 +40,7 @@ func (r *SyncLogRepository) CreateSyncLog(triggeredBy string, startedAt time.Tim
 	return id, nil
 }
 
-func (r *SyncLogRepository) UpdateSyncLog(id int64, completedAt *time.Time, totalFiles, processedFiles, errorCount int, errorMessage *string, status string) error {
+func (r *syncLogRepository) UpdateSyncLog(id int64, completedAt *time.Time, totalFiles, processedFiles, errorCount int, errorMessage *string, status string) error {
 	query := `
 		UPDATE sync_logs
 		SET completed_at = ?, total_files = ?, processed_files = ?, error_count = ?, error_message = ?, status = ?
@@ -44,7 +53,7 @@ func (r *SyncLogRepository) UpdateSyncLog(id int64, completedAt *time.Time, tota
 	return nil
 }
 
-func (r *SyncLogRepository) CreateSyncFileLog(syncLogID int64, path, action, status string, sha, oldSha *string, size, oldSize *int64, errorMessage *string) error {
+func (r *syncLogRepository) CreateSyncFileLog(syncLogID int64, path, action, status string, sha, oldSha *string, size, oldSize *int64, errorMessage *string) error {
 	query := `
 		INSERT INTO sync_file_logs (sync_log_id, path, action, status, sha, old_sha, size, old_size, error_message)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -56,7 +65,7 @@ func (r *SyncLogRepository) CreateSyncFileLog(syncLogID int64, path, action, sta
 	return nil
 }
 
-func (r *SyncLogRepository) GetSyncFilesByLogID(syncLogID int64) ([]*model.SyncFileLog, error) {
+func (r *syncLogRepository) GetSyncFilesByLogID(syncLogID int64) ([]*model.SyncFileLog, error) {
 	query := `
 		SELECT id, sync_log_id, path, action, status, sha, old_sha, size, old_size, error_message, created_at
 		FROM sync_file_logs
@@ -85,7 +94,7 @@ func (r *SyncLogRepository) GetSyncFilesByLogID(syncLogID int64) ([]*model.SyncF
 	return logs, nil
 }
 
-func (r *SyncLogRepository) GetAllSyncLogs(limit, offset int) ([]*model.SyncLog, error) {
+func (r *syncLogRepository) GetAllSyncLogs(limit, offset int) ([]*model.SyncLog, error) {
 	query := `
 		SELECT id, triggered_by, started_at, completed_at, status, total_files, processed_files, error_count, error_message
 		FROM sync_logs
@@ -114,7 +123,7 @@ func (r *SyncLogRepository) GetAllSyncLogs(limit, offset int) ([]*model.SyncLog,
 	return logs, nil
 }
 
-func (r *SyncLogRepository) GetSyncLogCount() (int, error) {
+func (r *syncLogRepository) GetSyncLogCount() (int, error) {
 	var count int
 	err := r.tx.QueryRow("SELECT COUNT(*) FROM sync_logs").Scan(&count)
 	if err != nil {

@@ -477,7 +477,7 @@ func (s *ImageService) SyncFromStorage(ctx context.Context, triggeredBy string) 
 
 		if dbImage == nil {
 			slog.Info("文件不在数据库中，创建新记录", "path", storageFile.Path)
-			image, err := s.createImageFromStorage(ctx, tx, storageFile, syncTag.ID)
+			image, err := s.createImageFromStorage(ctx, tx, storageFile, syncTag.ID, imageRepo)
 			if err != nil {
 				errMsg := fmt.Sprintf("创建图片记录失败: %v", err)
 				slog.Error(errMsg, "path", storageFile.Path)
@@ -592,8 +592,8 @@ func (s *ImageService) updateDerivedImageMeta(
 	imageID int64,
 	originalPath string,
 	storageFileMap map[string]*storage.RepositoryFile,
-	imageRepo *repository.ImageRepository,
-	syncLogRepo *repository.SyncLogRepository,
+	imageRepo repository.ImageRepositoryInterface,
+	syncLogRepo repository.SyncLogRepositoryInterface,
 	logID int64,
 	errorCount *int,
 ) {
@@ -638,7 +638,7 @@ func (s *ImageService) updateDerivedImageMeta(
 	}
 }
 
-func (s *ImageService) createImageFromStorage(ctx context.Context, tx *sql.Tx, storageFile *storage.RepositoryFile, syncTagID int64) (*model.Image, error) {
+func (s *ImageService) createImageFromStorage(ctx context.Context, tx *sql.Tx, storageFile *storage.RepositoryFile, syncTagID int64, imageRepo repository.ImageRepositoryInterface) (*model.Image, error) {
 	mimeType := "image/jpeg"
 	if idx := strings.LastIndex(storageFile.Path, "."); idx > 0 {
 		ext := strings.ToLower(storageFile.Path[idx:])
@@ -678,7 +678,6 @@ func (s *ImageService) createImageFromStorage(ctx context.Context, tx *sql.Tx, s
 		UploadedAt:       time.Now(),
 	}
 
-	imageRepo := repository.NewImageRepository(tx)
 	id, err := imageRepo.CreateImage(image)
 	if err != nil {
 		return nil, fmt.Errorf("创建图片记录失败: %w", err)

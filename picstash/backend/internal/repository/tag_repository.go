@@ -17,15 +17,15 @@ type TagRepositoryInterface interface {
 	GetByImageID(imageID int64) ([]*model.Tag, error)
 }
 
-type TagRepository struct {
+type tagRepository struct {
 	tx *sql.Tx
 }
 
-func NewTagRepository(tx *sql.Tx) *TagRepository {
-	return &TagRepository{tx: tx}
+func NewTagRepository(tx *sql.Tx) TagRepositoryInterface {
+	return &tagRepository{tx: tx}
 }
 
-func (r *TagRepository) Create(name, color string) (*model.Tag, error) {
+func (r *tagRepository) Create(name, color string) (*model.Tag, error) {
 	result, err := r.tx.Exec(`INSERT INTO tags (name, color) VALUES (?, ?)`, name, color)
 	if err != nil {
 		return nil, fmt.Errorf("创建标签失败: %w", err)
@@ -45,7 +45,7 @@ func (r *TagRepository) Create(name, color string) (*model.Tag, error) {
 	return tag, nil
 }
 
-func (r *TagRepository) Update(id int64, name, color string) (*model.Tag, error) {
+func (r *tagRepository) Update(id int64, name, color string) (*model.Tag, error) {
 	_, err := r.tx.Exec(`UPDATE tags SET name = ?, color = ? WHERE id = ?`, name, color, id)
 	if err != nil {
 		return nil, fmt.Errorf("更新标签失败: %w", err)
@@ -58,7 +58,7 @@ func (r *TagRepository) Update(id int64, name, color string) (*model.Tag, error)
 	return tag, nil
 }
 
-func (r *TagRepository) Delete(id int64) error {
+func (r *tagRepository) Delete(id int64) error {
 	result, err := r.tx.Exec(`DELETE FROM tags WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("删除标签失败: %w", err)
@@ -71,7 +71,7 @@ func (r *TagRepository) Delete(id int64) error {
 	return nil
 }
 
-func (r *TagRepository) GetByID(id int64) (*model.Tag, error) {
+func (r *tagRepository) GetByID(id int64) (*model.Tag, error) {
 	tag := &model.Tag{}
 
 	err := r.tx.QueryRow(`SELECT id, name, color, created_at FROM tags WHERE id = ?`, id).Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt)
@@ -84,7 +84,7 @@ func (r *TagRepository) GetByID(id int64) (*model.Tag, error) {
 	return tag, nil
 }
 
-func (r *TagRepository) GetAll() ([]*model.Tag, error) {
+func (r *tagRepository) GetAll() ([]*model.Tag, error) {
 	rows, err := r.tx.Query(`SELECT id, name, color, created_at FROM tags ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("查询标签列表失败: %w", err)
@@ -102,7 +102,7 @@ func (r *TagRepository) GetAll() ([]*model.Tag, error) {
 	return tags, nil
 }
 
-func (r *TagRepository) GetByImageID(imageID int64) ([]*model.Tag, error) {
+func (r *tagRepository) GetByImageID(imageID int64) ([]*model.Tag, error) {
 	rows, err := r.tx.Query(`
 		SELECT t.id, t.name, t.color, t.created_at
 		FROM tags t
