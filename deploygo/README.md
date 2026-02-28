@@ -155,12 +155,6 @@ cleanup:
 - `config.yaml 所在目录`: 即 `workspace/<project>/` 目录，所有相对路径都以此为基准
 - `projectName`: 配置文件中的 `project.project_name`
 
-**安全约束（重要）**：
-- 所有本地相对路径字段（如 `copy_to_container.from`、`copy_to_local.to_dir`、`deploys.from`、`cleanup.dirs`）都必须在 `workspace/<project>/` 下
-- 不允许绝对路径（如 `/tmp/a.txt`）和目录穿越路径（如 `../secret`）
-- `copy_to_local.empty_to_dir: true` 不能用于项目根目录（`.` 或空路径），否则会被拒绝执行
-- `copy_to_container.from` 使用 glob 时，如果没有匹配到任何文件会直接报错
-
 ### copy_to_local 拷贝结果示例
 
 假设 `config.yaml 所在目录` 为 `workspace/myproject/`，配置如下：
@@ -359,7 +353,6 @@ deploygo list
    - `~` 会自动展开为用户 home 目录（如 `~/.ssh/id_rsa`）
    - 所有本地路径相对于 `config.yaml 所在目录`（`workspace/<project>/`）
    - 远程路径必须是绝对路径
-   - 出于安全考虑，不允许绝对本地路径和 `..` 越界路径
 
 4. **传输方式**：
    - sftp：使用 SFTP 协议传输文件
@@ -373,7 +366,6 @@ deploygo list
    - 总是清理 `source` 目录
    - 可通过 `dirs` 配置额外清理的目录
    - 路径基于 `workspace/<project>/`
-   - `dirs` 不允许配置为绝对路径或越界路径（如 `../`）
 
 7. **Windows 注意事项**：
    - 本地开发可在 Windows 上运行

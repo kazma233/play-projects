@@ -1,10 +1,10 @@
 package stage
 
 import (
-	"deploygo/internal/pathutil"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"deploygo/internal/config"
 )
@@ -24,10 +24,7 @@ func RunCleanup(cleanup *config.CleanupConfig, projectDir string) error {
 	cleanupDirs := append(defaultDirs, cleanup.Dirs...)
 
 	for _, dir := range cleanupDirs {
-		targetDir, err := pathutil.ResolveProjectPath(projectDir, dir, false)
-		if err != nil {
-			return fmt.Errorf("invalid cleanup dir %q: %w", dir, err)
-		}
+		targetDir := filepath.Join(projectDir, dir)
 		log.Printf("Removing directory: %s", targetDir)
 		if err := os.RemoveAll(targetDir); err != nil {
 			return fmt.Errorf("failed to remove directory %s: %w", targetDir, err)
