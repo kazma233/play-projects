@@ -324,6 +324,11 @@ func (s *ImageService) GetList(page, limit int, tagID *int) ([]*model.Image, int
 		return nil, 0, err
 	}
 
+	// 填充完整URL
+	for _, image := range images {
+		s.fillImageURLs(image)
+	}
+
 	return images, total, nil
 }
 
@@ -340,6 +345,9 @@ func (s *ImageService) GetByID(id int64) (*model.Image, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// 填充完整URL
+	s.fillImageURLs(image)
 
 	return image, nil
 }
@@ -373,6 +381,23 @@ func intPtr(i int) *int {
 
 func int64Ptr(i int64) *int64 {
 	return &i
+}
+
+// fillImageURLs 填充图片的完整URL
+// 使用 storage.GetPublicURL 获取前端访问地址
+func (s *ImageService) fillImageURLs(image *model.Image) {
+	if image == nil {
+		return
+	}
+	if image.Path != "" {
+		image.URL = s.storage.GetPublicURL(image.Path)
+	}
+	if image.ThumbnailPath != "" {
+		image.ThumbnailURL = s.storage.GetPublicURL(image.ThumbnailPath)
+	}
+	if image.WatermarkPath != "" {
+		image.WatermarkURL = s.storage.GetPublicURL(image.WatermarkPath)
+	}
 }
 
 func (s *ImageService) SyncFromStorage(ctx context.Context, triggeredBy string) (*SyncResult, error) {

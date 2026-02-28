@@ -37,3 +37,5 @@ vendor
 
 config.yaml
 __debug*
+
+*/data

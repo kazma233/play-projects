@@ -18,6 +18,7 @@ import (
 	"picstash/internal/storage"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/static"
 )
 
 func main() {
@@ -52,9 +53,16 @@ func main() {
 	emailService := auth.NewEmailService(cfg)
 	verificationService := auth.NewVerificationCodeService(database.GetDB())
 
-	slog.Info("GitHub配置", "owner", cfg.GitHub.Owner, "repo", cfg.GitHub.Repo, "branch", cfg.GitHub.Branch, "token_prefix", cfg.GitHub.Token[:10]+"...")
-	storage := storage.NewGitHubStorage(cfg.GitHub.Token, cfg.GitHub.Owner, cfg.GitHub.Repo, cfg.GitHub.Branch)
-	imageService := service.NewImageService(database.GetDB(), storage, cfg.GitHub.PathPrefix)
+	// 创建存储实例
+	storageInstance := createStorage(cfg)
+
+	// 确定路径前缀
+	pathPrefix := cfg.Storage.GitHub.PathPrefix
+	if pathPrefix == "" {
+		pathPrefix = "images"
+	}
+
+	imageService := service.NewImageService(database.GetDB(), storageInstance, pathPrefix)
 	tagService := service.NewTagService(database.GetDB())
 
 	app := fiber.New(fiber.Config{
@@ -67,6 +75,9 @@ func main() {
 	app.Use(middleware.Logger())
 
 	api.SetupRoutes(app, cfg, jwtService, emailService, verificationService, imageService, tagService, database.GetDB())
+
+	// 设置本地存储的静态文件服务
+	setupStaticFiles(app, cfg, storageInstance)
 
 	app.Get("/health", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{
@@ -136,5 +147,58 @@ func parseBodySize(size string) int {
 		return value * 1024 * 1024 * 1024
 	default:
 		return value
+	}
+}
+
+// createStorage 根据配置创建对应的存储实例
+func createStorage(cfg *config.Config) storage.Storage {
+	storageType := cfg.Storage.Type
+	if storageType == "" {
+		storageType = "github" // 默认使用 GitHub 存储
+	}
+
+	switch storageType {
+	case "local":
+		// 构建服务器地址
+		serverAddr := cfg.Storage.Local.ServerAddr
+		if serverAddr == "" {
+			serverAddr = fmt.Sprintf("http://localhost:%d", cfg.Server.Port)
+		}
+		slog.Info("使用本地文件系统存储",
+			"base_path", cfg.Storage.Local.BasePath,
+			"url_path", cfg.Storage.Local.URLPath,
+			"server_addr", serverAddr,
+		)
+		return storage.NewLocalStorage(
+			cfg.Storage.Local.BasePath,
+			cfg.Storage.Local.URLPath,
+			serverAddr,
+		)
+	case "github":
+		githubCfg := cfg.Storage.GitHub
+		slog.Info("使用 GitHub 存储",
+			"owner", githubCfg.Owner,
+			"repo", githubCfg.Repo,
+			"branch", githubCfg.Branch,
+		)
+		return storage.NewGitHubStorage(githubCfg.Token, githubCfg.Owner, githubCfg.Repo, githubCfg.Branch)
+	default:
+		slog.Warn("未知的存储类型，使用 GitHub 作为默认存储", "type", storageType)
+		return storage.NewGitHubStorage(cfg.Storage.GitHub.Token, cfg.Storage.GitHub.Owner, cfg.Storage.GitHub.Repo, cfg.Storage.GitHub.Branch)
+	}
+}
+
+// setupStaticFiles 为本地存储设置静态文件服务
+func setupStaticFiles(app *fiber.App, cfg *config.Config, storageInstance storage.Storage) {
+	// 根据配置判断是否为本地存储
+	if cfg.Storage.Type == "local" {
+		urlPath := cfg.Storage.Local.URLPath
+		basePath := cfg.Storage.Local.BasePath
+
+		slog.Info("注册静态文件服务", "url_path", urlPath, "base_path", basePath)
+
+		// 注册静态文件路由，将 urlPath 映射到 basePath
+		// 例如：/files/images/xxx.jpg -> ./data/files/images/xxx.jpg
+		app.Get(urlPath+"/*", static.New(basePath))
 	}
 }

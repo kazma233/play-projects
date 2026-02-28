@@ -16,7 +16,7 @@
 ### 后端
 - **框架**: Go 1.25 + Fiber v3
 - **数据库**: SQLite3 (modernc.org/sqlite，无CGO)
-- **存储**: GitHub REST API (go-github/v58)
+- **存储**: 支持 GitHub REST API (go-github/v58) 或本地文件系统
 - **认证**: JWT (golang-jwt/jwt/v5) + 邮箱验证码
 - **配置**: Viper
 - **日志**: Go 标准库 log/slog
@@ -85,7 +85,11 @@ jwt:
   expires_in: 24h             # Token 过期时间
 ```
 
-### GitHub 配置
+### 存储配置
+
+支持两种存储后端：GitHub 或本地文件系统。
+
+#### GitHub 存储（默认）
 1. 创建 GitHub Personal Access Token
    - 访问: https://github.com/settings/tokens
    - 选择 `repo` 权限
@@ -96,13 +100,36 @@ jwt:
 
 3. 配置 backend/config.yaml
    ```yaml
-   github:
-     token: your-github-token
-     owner: your-github-username
-     repo: your-image-repo
-     branch: main
-     path_prefix: images
+   storage:
+     type: github
+     github:
+       token: your-github-token
+       owner: your-github-username
+       repo: your-image-repo
+       branch: main
+       path_prefix: images
    ```
+
+#### 本地文件系统存储
+适用于自建服务器或开发环境，无需 GitHub Token。
+
+```yaml
+storage:
+  type: local
+  local:
+    base_path: ./data/files    # 文件存储根目录
+    url_path: /files          # URL路径前缀
+    server_addr: http://localhost:6100  # 后端服务地址（可选）
+```
+
+- `base_path`: 文件实际存储的本地路径
+- `url_path`: URL路径前缀（如 `/files`）
+- `server_addr`: 后端服务地址，用于拼接完整URL（可选，默认自动推断）
+
+**URL 处理流程：**
+- 数据库存储: `/files/images/xxx.jpg`（相对路径）
+- API 返回: `http://localhost:6100/files/images/xxx.jpg`（通过 `storage.GetPublicURL()` 获取）
+- GitHub 存储返回: `https://raw.githubusercontent.com/owner/repo/branch/images/xxx.jpg`
 
 ### SMTP 配置
 ```yaml

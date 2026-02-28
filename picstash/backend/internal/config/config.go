@@ -9,14 +9,14 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig `mapstructure:"server"`
-	Database DBConfig     `mapstructure:"database"`
-	JWT      JWTConfig    `mapstructure:"jwt"`
-	SMTP     SMTPConfig   `mapstructure:"smtp"`
-	GitHub   GitHubConfig `mapstructure:"github"`
-	Upload   UploadConfig `mapstructure:"upload"`
-	Log      LogConfig    `mapstructure:"log"`
-	Auth     AuthConfig   `mapstructure:"auth"`
+	Server   ServerConfig  `mapstructure:"server"`
+	Database DBConfig      `mapstructure:"database"`
+	JWT      JWTConfig     `mapstructure:"jwt"`
+	SMTP     SMTPConfig    `mapstructure:"smtp"`
+	Storage  StorageConfig `mapstructure:"storage"`
+	Upload   UploadConfig  `mapstructure:"upload"`
+	Log      LogConfig     `mapstructure:"log"`
+	Auth     AuthConfig    `mapstructure:"auth"`
 }
 
 type ServerConfig struct {
@@ -51,6 +51,18 @@ type GitHubConfig struct {
 	PathPrefix string `mapstructure:"path_prefix"`
 }
 
+type StorageConfig struct {
+	Type   string       `mapstructure:"type"` // "github" 或 "local"
+	Local  LocalConfig  `mapstructure:"local"`
+	GitHub GitHubConfig `mapstructure:"github"`
+}
+
+type LocalConfig struct {
+	BasePath   string `mapstructure:"base_path"`   // 文件存储根目录
+	URLPath    string `mapstructure:"url_path"`    // URL路径前缀（如 /files）
+	ServerAddr string `mapstructure:"server_addr"` // 后端服务地址（如 http://localhost:6100）
+}
+
 type UploadConfig struct {
 }
 
@@ -73,6 +85,9 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("database.path", "./data/picstash.db")
 	v.SetDefault("jwt.expires_in", "24h")
 	v.SetDefault("smtp.port", "587")
+	v.SetDefault("storage.type", "github")
+	v.SetDefault("storage.local.base_path", "./data/files")
+	v.SetDefault("storage.local.url_path", "/files")
 	v.SetDefault("github.branch", "main")
 	v.SetDefault("github.path_prefix", "images")
 	v.SetDefault("upload.thumbnail_width", 1920)

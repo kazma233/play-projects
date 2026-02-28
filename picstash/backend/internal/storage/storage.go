@@ -2,16 +2,28 @@ package storage
 
 import "context"
 
+// File 表示要上传的文件
 type File struct {
-	Path        string
-	Content     []byte
-	ContentType string
+	Path        string // 文件路径（相对路径）
+	Content     []byte // 文件内容
+	ContentType string // 文件内容类型
 }
 
+// UploadResult 表示上传结果
 type UploadResult struct {
-	Path string
-	URL  string
-	SHA  string
+	Path string // 文件路径
+	URL  string // 访问URL
+	SHA  string // 文件哈希（GitHub为文件SHA，本地存储为简化校验和）
+}
+
+// RepositoryFile 表示仓库中的文件信息
+// 用于 ListFiles 返回的文件列表
+type RepositoryFile struct {
+	Path        string // 文件路径
+	SHA         string // 文件SHA或校验和
+	Size        int64  // 文件大小（字节）
+	Type        string // 文件类型："file" 或 "dir"
+	DownloadURL string // 下载URL
 }
 
 type Storage interface {
@@ -22,4 +34,7 @@ type Storage interface {
 	Exists(ctx context.Context, path string) (bool, error)
 	ListFiles(ctx context.Context, path string) ([]*RepositoryFile, error)
 	GetRawFileContent(ctx context.Context, path string) ([]byte, error)
+	// GetPublicURL 获取前端访问的完整URL
+	// GitHub存储返回GitHub原始地址，本地存储返回本地服务地址
+	GetPublicURL(path string) string
 }

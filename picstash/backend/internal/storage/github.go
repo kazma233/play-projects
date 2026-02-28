@@ -11,15 +11,7 @@ import (
 	"github.com/google/go-github/v58/github"
 )
 
-type RepositoryFile struct {
-	Path        string
-	SHA         string
-	Size        int64
-	Type        string
-	DownloadURL string
-}
-
-type GitHubStorage struct {
+type githubStorage struct {
 	client    *github.Client
 	repoOwner string
 	repoName  string
@@ -27,9 +19,9 @@ type GitHubStorage struct {
 	baseURL   string
 }
 
-func NewGitHubStorage(token, owner, repo, branch string) *GitHubStorage {
+func NewGitHubStorage(token, owner, repo, branch string) Storage {
 	client := github.NewTokenClient(context.Background(), token)
-	return &GitHubStorage{
+	return &githubStorage{
 		client:    client,
 		repoOwner: owner,
 		repoName:  repo,
@@ -38,7 +30,7 @@ func NewGitHubStorage(token, owner, repo, branch string) *GitHubStorage {
 	}
 }
 
-func (s *GitHubStorage) Upload(ctx context.Context, file *File) (*UploadResult, error) {
+func (s *githubStorage) Upload(ctx context.Context, file *File) (*UploadResult, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
@@ -76,7 +68,7 @@ func (s *GitHubStorage) Upload(ctx context.Context, file *File) (*UploadResult, 
 	return nil, fmt.Errorf("上传文件到GitHub失败: %w", lastErr)
 }
 
-func (s *GitHubStorage) BatchUpload(ctx context.Context, files []*File) ([]*UploadResult, error) {
+func (s *githubStorage) BatchUpload(ctx context.Context, files []*File) ([]*UploadResult, error) {
 	results := make([]*UploadResult, 0, len(files))
 
 	for _, file := range files {
@@ -91,7 +83,7 @@ func (s *GitHubStorage) BatchUpload(ctx context.Context, files []*File) ([]*Uplo
 	return results, nil
 }
 
-func (s *GitHubStorage) Delete(ctx context.Context, path, sha string) error {
+func (s *githubStorage) Delete(ctx context.Context, path, sha string) error {
 	if sha == "" {
 		return fmt.Errorf("文件SHA不能为空")
 	}
@@ -130,11 +122,17 @@ func (s *GitHubStorage) Delete(ctx context.Context, path, sha string) error {
 	return fmt.Errorf("从GitHub删除文件失败: %w", lastErr)
 }
 
-func (s *GitHubStorage) GetURL(ctx context.Context, path string) string {
+func (s *githubStorage) GetURL(ctx context.Context, path string) string {
 	return s.baseURL + path
 }
 
-func (s *GitHubStorage) Exists(ctx context.Context, path string) (bool, error) {
+// GetPublicURL 获取前端访问的完整URL
+// 返回GitHub原始文件地址: https://raw.githubusercontent.com/owner/repo/branch/path
+func (s *githubStorage) GetPublicURL(path string) string {
+	return s.baseURL + path
+}
+
+func (s *githubStorage) Exists(ctx context.Context, path string) (bool, error) {
 	_, _, resp, err := s.client.Repositories.GetContents(ctx, s.repoOwner, s.repoName, path, nil)
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
@@ -145,7 +143,7 @@ func (s *GitHubStorage) Exists(ctx context.Context, path string) (bool, error) {
 	return true, nil
 }
 
-func (s *GitHubStorage) ListFiles(ctx context.Context, path string) ([]*RepositoryFile, error) {
+func (s *githubStorage) ListFiles(ctx context.Context, path string) ([]*RepositoryFile, error) {
 	var allFiles []*RepositoryFile
 
 	_, dirContent, _, err := s.client.Repositories.GetContents(ctx, s.repoOwner, s.repoName, path, nil)
@@ -175,7 +173,7 @@ func (s *GitHubStorage) ListFiles(ctx context.Context, path string) ([]*Reposito
 	return allFiles, nil
 }
 
-func (s *GitHubStorage) GetRawFileContent(ctx context.Context, path string) ([]byte, error) {
+func (s *githubStorage) GetRawFileContent(ctx context.Context, path string) ([]byte, error) {
 	readCloser, _, err := s.client.Repositories.DownloadContents(ctx, s.repoOwner, s.repoName, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("下载文件内容失败: %w", err)

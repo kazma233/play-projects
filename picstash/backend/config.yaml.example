@@ -18,12 +18,23 @@ smtp:
   from: noreply@picstash.app
   from_name: Picstash
 
-github:
-  token: your-github-personal-access-token
-  owner: your-github-username
-  repo: your-image-repo
-  branch: main
-  path_prefix: images
+# 存储配置：支持 github 或 local
+storage:
+  type: github  # 可选值: github, local
+
+  # GitHub 存储配置（当 type 为 github 时使用）
+  github:
+    token: your-github-personal-access-token
+    owner: your-github-username
+    repo: your-image-repo
+    branch: main
+    path_prefix: images
+
+  # 本地存储配置（当 type 为 local 时使用）
+  local:
+    base_path: ./data/files      # 文件存储根目录
+    url_path: /files            # URL路径前缀
+    server_addr: http://localhost:6100  # 后端服务地址（可选，默认自动推断）（如 /files）
 
 log:
   level: debug  # debug, info, warn, error
