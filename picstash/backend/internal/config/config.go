@@ -44,17 +44,17 @@ type SMTPConfig struct {
 }
 
 type GitHubConfig struct {
-	Token      string `mapstructure:"token"`
-	Owner      string `mapstructure:"owner"`
-	Repo       string `mapstructure:"repo"`
-	Branch     string `mapstructure:"branch"`
-	PathPrefix string `mapstructure:"path_prefix"`
+	Token  string `mapstructure:"token"`
+	Owner  string `mapstructure:"owner"`
+	Repo   string `mapstructure:"repo"`
+	Branch string `mapstructure:"branch"`
 }
 
 type StorageConfig struct {
-	Type   string       `mapstructure:"type"` // "github" 或 "local"
-	Local  LocalConfig  `mapstructure:"local"`
-	GitHub GitHubConfig `mapstructure:"github"`
+	Type       string       `mapstructure:"type"` // "github" 或 "local"
+	PathPrefix string       `mapstructure:"path_prefix"`
+	Local      LocalConfig  `mapstructure:"local"`
+	GitHub     GitHubConfig `mapstructure:"github"`
 }
 
 type LocalConfig struct {
@@ -86,10 +86,10 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("jwt.expires_in", "24h")
 	v.SetDefault("smtp.port", "587")
 	v.SetDefault("storage.type", "github")
+	// path_prefix 默认为空，用户可自行配置
 	v.SetDefault("storage.local.base_path", "./data/files")
 	v.SetDefault("storage.local.url_path", "/files")
 	v.SetDefault("github.branch", "main")
-	v.SetDefault("github.path_prefix", "images")
 	v.SetDefault("upload.thumbnail_width", 1920)
 	v.SetDefault("upload.thumbnail_quality", 80)
 	v.SetDefault("upload.thumbnail_format", "jpeg")

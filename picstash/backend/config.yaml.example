@@ -21,6 +21,7 @@ smtp:
 # 存储配置：支持 github 或 local
 storage:
   type: github  # 可选值: github, local
+  path_prefix: ""  # 文件路径前缀，适用于 github 和 local 存储，如 "images" 或留空
 
   # GitHub 存储配置（当 type 为 github 时使用）
   github:
@@ -28,7 +29,6 @@ storage:
     owner: your-github-username
     repo: your-image-repo
     branch: main
-    path_prefix: images
 
   # 本地存储配置（当 type 为 local 时使用）
   local:

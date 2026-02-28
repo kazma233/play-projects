@@ -102,12 +102,12 @@ jwt:
    ```yaml
    storage:
      type: github
+      path_prefix: images
      github:
        token: your-github-token
        owner: your-github-username
        repo: your-image-repo
        branch: main
-       path_prefix: images
    ```
 
 #### 本地文件系统存储
@@ -116,6 +116,7 @@ jwt:
 ```yaml
 storage:
   type: local
+  path_prefix: images
   local:
     base_path: ./data/files    # 文件存储根目录
     url_path: /files          # URL路径前缀

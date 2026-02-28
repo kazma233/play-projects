@@ -56,11 +56,8 @@ func main() {
 	// 创建存储实例
 	storageInstance := createStorage(cfg)
 
-	// 确定路径前缀
-	pathPrefix := cfg.Storage.GitHub.PathPrefix
-	if pathPrefix == "" {
-		pathPrefix = "images"
-	}
+	// 确定路径前缀（统一从 storage.path_prefix 读取，支持为空）
+	pathPrefix := cfg.Storage.PathPrefix
 
 	imageService := service.NewImageService(database.GetDB(), storageInstance, pathPrefix)
 	tagService := service.NewTagService(database.GetDB())
@@ -154,7 +151,7 @@ func parseBodySize(size string) int {
 func createStorage(cfg *config.Config) storage.Storage {
 	storageType := cfg.Storage.Type
 	if storageType == "" {
-		storageType = "github" // 默认使用 GitHub 存储
+		storageType = "local" // 默认使用 local 存储
 	}
 
 	switch storageType {
@@ -183,8 +180,7 @@ func createStorage(cfg *config.Config) storage.Storage {
 		)
 		return storage.NewGitHubStorage(githubCfg.Token, githubCfg.Owner, githubCfg.Repo, githubCfg.Branch)
 	default:
-		slog.Warn("未知的存储类型，使用 GitHub 作为默认存储", "type", storageType)
-		return storage.NewGitHubStorage(cfg.Storage.GitHub.Token, cfg.Storage.GitHub.Owner, cfg.Storage.GitHub.Repo, cfg.Storage.GitHub.Branch)
+		panic("storage unkonw")
 	}
 }
 
