@@ -89,6 +89,11 @@ func (e *EmailService) SendVerificationCode(to, code string, expiresIn int) erro
 func (e *EmailService) send(to string, msg []byte) error {
 	addr := net.JoinHostPort(e.host, strconv.Itoa(e.port))
 
+	if e.port == 465 || e.port == 994 {
+		slog.Info("使用直接TLS连接", "addr", addr)
+		return e.sendWithDirectTLS(to, msg)
+	}
+
 	slog.Info("尝试连接SMTP服务器", "addr", addr, "host", e.host)
 
 	dialer := &net.Dialer{Timeout: e.timeout}
@@ -118,11 +123,6 @@ func (e *EmailService) send(to string, msg []byte) error {
 	if ok, _ := client.Extension("STARTTLS"); ok {
 		slog.Info("服务器支持STARTTLS，使用STARTTLS方式")
 		return e.sendWithSTARTTLSUpgrade(client, to, msg)
-	}
-
-	if e.port == 465 || e.port == 994 {
-		slog.Info("服务器不支持STARTTLS，尝试直接TLS连接")
-		return e.sendWithDirectTLS(to, msg)
 	}
 
 	return fmt.Errorf("服务器不支持STARTTLS，且端口非SMTPS端口(465/994)")
