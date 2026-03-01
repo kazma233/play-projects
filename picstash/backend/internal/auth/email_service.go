@@ -97,6 +97,8 @@ func (e *EmailService) send(to string, msg []byte) error {
 func (e *EmailService) sendWithSMTPS(to string, msg []byte) error {
 	addr := net.JoinHostPort(e.host, strconv.Itoa(e.port))
 
+	slog.Info("尝试SMTPS连接", "addr", addr, "host", e.host)
+
 	dialer := &net.Dialer{Timeout: e.timeout}
 
 	tlsConfig := &tls.Config{
@@ -117,12 +119,24 @@ func (e *EmailService) sendWithSMTPS(to string, msg []byte) error {
 	}
 	defer client.Close()
 
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "localhost"
+	}
+	if err := client.Hello(hostname); err != nil {
+		return fmt.Errorf("EHLO失败: %w", err)
+	}
+
+	slog.Info("SMTP客户端已创建，开始认证")
+
 	return e.doAuthAndSend(client, to, msg)
 }
 
 // sendWithSTARTTLS 使用STARTTLS发送邮件（端口587，先TCP再升级TLS）
 func (e *EmailService) sendWithSTARTTLS(to string, msg []byte) error {
 	addr := net.JoinHostPort(e.host, strconv.Itoa(e.port))
+
+	slog.Info("尝试STARTTLS连接", "addr", addr, "host", e.host)
 
 	dialer := &net.Dialer{Timeout: e.timeout}
 
@@ -147,6 +161,7 @@ func (e *EmailService) sendWithSTARTTLS(to string, msg []byte) error {
 	}
 
 	if ok, _ := client.Extension("STARTTLS"); ok {
+		slog.Info("服务器支持STARTTLS，升级连接")
 		tlsConfig := &tls.Config{
 			ServerName:         e.host,
 			InsecureSkipVerify: e.skipTLSVerify,
@@ -158,6 +173,8 @@ func (e *EmailService) sendWithSTARTTLS(to string, msg []byte) error {
 	} else {
 		return fmt.Errorf("服务器不支持STARTTLS，无法建立安全连接")
 	}
+
+	slog.Info("TLS已升级，开始认证")
 
 	return e.doAuthAndSend(client, to, msg)
 }
