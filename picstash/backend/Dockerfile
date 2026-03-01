@@ -18,8 +18,6 @@ WORKDIR /app
 
 COPY --from=builder /app/server .
 COPY config.yaml .
-COPY migrations ./migrations
-COPY templates ./templates
 
 RUN mkdir -p data logs
 

@@ -3,18 +3,21 @@ package database
 import (
 	"crypto/sha256"
 	"database/sql"
+	"embed"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 )
 
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
+
 type Migration struct {
 	Name     string
 	Checksum string
+	Content  string
 }
 
 func AutoMigrate(db *sql.DB) error {
@@ -53,13 +56,7 @@ func AutoMigrate(db *sql.DB) error {
 }
 
 func loadMigrations() ([]Migration, error) {
-	// 获取 migrations 目录的绝对路径
-	migrationsDir, err := getMigrationsDir()
-	if err != nil {
-		return nil, err
-	}
-
-	entries, err := os.ReadDir(migrationsDir)
+	entries, err := migrationFiles.ReadDir("migrations")
 	if err != nil {
 		return nil, fmt.Errorf("读取迁移目录失败: %w", err)
 	}
@@ -70,7 +67,7 @@ func loadMigrations() ([]Migration, error) {
 			continue
 		}
 
-		content, err := os.ReadFile(filepath.Join(migrationsDir, entry.Name()))
+		content, err := migrationFiles.ReadFile("migrations/" + entry.Name())
 		if err != nil {
 			return nil, fmt.Errorf("读取迁移文件失败 %s: %w", entry.Name(), err)
 		}
@@ -80,6 +77,7 @@ func loadMigrations() ([]Migration, error) {
 		migrations = append(migrations, Migration{
 			Name:     entry.Name(),
 			Checksum: checksum,
+			Content:  string(content),
 		})
 	}
 
@@ -90,43 +88,34 @@ func loadMigrations() ([]Migration, error) {
 	return migrations, nil
 }
 
-func getMigrationsDir() (string, error) {
-	// 获取可执行文件所在目录
-	execPath, err := os.Executable()
+func executeMigration(db *sql.DB, migration Migration) error {
+	tx, err := db.Begin()
 	if err != nil {
-		return "", err
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(migration.Content); err != nil {
+		return err
 	}
 
-	execDir := filepath.Dir(execPath)
-
-	// 检查是否存在 migrations 目录
-	migrationsDir := filepath.Join(execDir, "migrations")
-	if _, err := os.Stat(migrationsDir); err == nil {
-		return migrationsDir, nil
-	}
-
-	// 如果当前目录下有 migrations，使用当前目录
-	cwd, err := os.Getwd()
+	_, err = tx.Exec(
+		"INSERT INTO migrations (name, checksum, executed_at) VALUES (?, ?, ?)",
+		migration.Name,
+		migration.Checksum,
+		time.Now(),
+	)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	migrationsDir = filepath.Join(cwd, "migrations")
-	if _, err := os.Stat(migrationsDir); err == nil {
-		return migrationsDir, nil
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 
-	// 向上查找 migrations 目录
-	searchDir := cwd
-	for i := 0; i < 3; i++ {
-		migrationsDir = filepath.Join(searchDir, "migrations")
-		if _, err := os.Stat(migrationsDir); err == nil {
-			return migrationsDir, nil
-		}
-		searchDir = filepath.Dir(searchDir)
-	}
+	slog.Info("迁移执行成功", "name", migration.Name)
 
-	return "", fmt.Errorf("找不到 migrations 目录")
+	return nil
 }
 
 func createMigrationsTable(db *sql.DB) error {
@@ -148,44 +137,4 @@ func isMigrationExecuted(db *sql.DB, name string) (bool, error) {
 		return false, err
 	}
 	return exists, nil
-}
-
-func executeMigration(db *sql.DB, migration Migration) error {
-	migrationsDir, err := getMigrationsDir()
-	if err != nil {
-		return err
-	}
-
-	content, err := os.ReadFile(filepath.Join(migrationsDir, migration.Name))
-	if err != nil {
-		return err
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec(string(content)); err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(
-		"INSERT INTO migrations (name, checksum, executed_at) VALUES (?, ?, ?)",
-		migration.Name,
-		migration.Checksum,
-		time.Now(),
-	)
-	if err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	slog.Info("迁移执行成功", "name", migration.Name)
-
-	return nil
 }

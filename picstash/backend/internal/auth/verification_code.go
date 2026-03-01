@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"time"
 )
 
@@ -101,4 +103,10 @@ func (s *VerificationCodeService) CleanupExpired() error {
 	}
 
 	return nil
+}
+
+// GenerateCode 生成6位数字验证码
+func GenerateCode() string {
+	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
+	return fmt.Sprintf("%06d", n.Int64())
 }

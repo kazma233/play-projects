@@ -12,11 +12,12 @@ jwt:
 
 smtp:
   host: smtp.gmail.com
-  port: "587"
+  port: 587
   username: your-email@gmail.com
   password: your-app-password
   from: noreply@picstash.app
   from_name: Picstash
+  skip_tls_verify: false
 
 # 存储配置：支持 github 或 local
 storage:

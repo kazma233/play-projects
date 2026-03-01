@@ -136,11 +136,12 @@ storage:
 ```yaml
 smtp:
   host: smtp.gmail.com
-  port: "587"
+  port: 587
   username: your-email@gmail.com
   password: your-app-password
   from: noreply@picstash.app
   from_name: Picstash
+  skip_tls_verify: false  # 生产环境保持 false，自签名证书时设为 true
 ```
 
 ### 认证配置

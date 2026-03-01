@@ -35,12 +35,13 @@ type JWTConfig struct {
 }
 
 type SMTPConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     string `mapstructure:"port"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	From     string `mapstructure:"from"`
-	FromName string `mapstructure:"from_name"`
+	Host          string `mapstructure:"host"`
+	Port          int    `mapstructure:"port"`
+	Username      string `mapstructure:"username"`
+	Password      string `mapstructure:"password"`
+	From          string `mapstructure:"from"`
+	FromName      string `mapstructure:"from_name"`
+	SkipTLSVerify bool   `mapstructure:"skip_tls_verify"`
 }
 
 type GitHubConfig struct {
@@ -84,7 +85,7 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("server.max_body_size", "100MB")
 	v.SetDefault("database.path", "./data/picstash.db")
 	v.SetDefault("jwt.expires_in", "24h")
-	v.SetDefault("smtp.port", "587")
+	v.SetDefault("smtp.port", 587)
 	v.SetDefault("storage.type", "github")
 	// path_prefix 默认为空，用户可自行配置
 	v.SetDefault("storage.local.base_path", "./data/files")
