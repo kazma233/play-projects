@@ -85,19 +85,69 @@ func (e *EmailService) SendVerificationCode(to, code string, expiresIn int) erro
 	return e.send(to, msg)
 }
 
-// send 根据端口自动选择发送方式
+// send 自动选择发送方式
 func (e *EmailService) send(to string, msg []byte) error {
-	if e.port == 465 {
-		return e.sendWithSMTPS(to, msg)
-	}
-	return e.sendWithSTARTTLS(to, msg)
-}
-
-// sendWithSMTPS 使用SMTPS发送邮件（端口465，直接TLS连接）
-func (e *EmailService) sendWithSMTPS(to string, msg []byte) error {
 	addr := net.JoinHostPort(e.host, strconv.Itoa(e.port))
 
-	slog.Info("尝试SMTPS连接", "addr", addr, "host", e.host)
+	slog.Info("尝试连接SMTP服务器", "addr", addr, "host", e.host)
+
+	dialer := &net.Dialer{Timeout: e.timeout}
+
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("TCP连接失败: %w", err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, e.host)
+	if err != nil {
+		return fmt.Errorf("创建SMTP客户端失败: %w", err)
+	}
+	defer client.Close()
+
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "localhost"
+	}
+	if err := client.Hello(hostname); err != nil {
+		return fmt.Errorf("EHLO失败: %w", err)
+	}
+
+	slog.Info("检查服务器STARTTLS支持")
+
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		slog.Info("服务器支持STARTTLS，使用STARTTLS方式")
+		return e.sendWithSTARTTLSUpgrade(client, to, msg)
+	}
+
+	if e.port == 465 || e.port == 994 {
+		slog.Info("服务器不支持STARTTLS，尝试直接TLS连接")
+		return e.sendWithDirectTLS(to, msg)
+	}
+
+	return fmt.Errorf("服务器不支持STARTTLS，且端口非SMTPS端口(465/994)")
+}
+
+// sendWithSTARTTLSUpgrade 使用已建立的连接升级TLS
+func (e *EmailService) sendWithSTARTTLSUpgrade(client *smtp.Client, to string, msg []byte) error {
+	tlsConfig := &tls.Config{
+		ServerName:         e.host,
+		InsecureSkipVerify: e.skipTLSVerify,
+		MinVersion:         tls.VersionTLS12,
+	}
+	if err := client.StartTLS(tlsConfig); err != nil {
+		return fmt.Errorf("STARTTLS升级失败: %w", err)
+	}
+
+	slog.Info("TLS已升级，开始认证")
+	return e.doAuthAndSend(client, to, msg)
+}
+
+// sendWithDirectTLS 关闭明文连接，重新建立直接TLS连接
+func (e *EmailService) sendWithDirectTLS(to string, msg []byte) error {
+	addr := net.JoinHostPort(e.host, strconv.Itoa(e.port))
+
+	slog.Info("建立直接TLS连接", "addr", addr)
 
 	dialer := &net.Dialer{Timeout: e.timeout}
 
@@ -128,54 +178,6 @@ func (e *EmailService) sendWithSMTPS(to string, msg []byte) error {
 	}
 
 	slog.Info("SMTP客户端已创建，开始认证")
-
-	return e.doAuthAndSend(client, to, msg)
-}
-
-// sendWithSTARTTLS 使用STARTTLS发送邮件（端口587，先TCP再升级TLS）
-func (e *EmailService) sendWithSTARTTLS(to string, msg []byte) error {
-	addr := net.JoinHostPort(e.host, strconv.Itoa(e.port))
-
-	slog.Info("尝试STARTTLS连接", "addr", addr, "host", e.host)
-
-	dialer := &net.Dialer{Timeout: e.timeout}
-
-	conn, err := dialer.Dial("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("TCP连接失败: %w", err)
-	}
-	defer conn.Close()
-
-	client, err := smtp.NewClient(conn, e.host)
-	if err != nil {
-		return fmt.Errorf("创建SMTP客户端失败: %w", err)
-	}
-	defer client.Close()
-
-	hostname, _ := os.Hostname()
-	if hostname == "" {
-		hostname = "localhost"
-	}
-	if err := client.Hello(hostname); err != nil {
-		return fmt.Errorf("EHLO失败: %w", err)
-	}
-
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		slog.Info("服务器支持STARTTLS，升级连接")
-		tlsConfig := &tls.Config{
-			ServerName:         e.host,
-			InsecureSkipVerify: e.skipTLSVerify,
-			MinVersion:         tls.VersionTLS12,
-		}
-		if err := client.StartTLS(tlsConfig); err != nil {
-			return fmt.Errorf("STARTTLS升级失败: %w", err)
-		}
-	} else {
-		return fmt.Errorf("服务器不支持STARTTLS，无法建立安全连接")
-	}
-
-	slog.Info("TLS已升级，开始认证")
-
 	return e.doAuthAndSend(client, to, msg)
 }
 
