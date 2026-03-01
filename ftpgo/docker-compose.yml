@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  ftpgo:
+    build: .
+    container_name: ftpgo
+    ports:
+      - "7300:7300"
+    volumes:
+      - ftpgo-storage:/data
+    environment:
+      - FTPGO_ROOT=/data
+      - FTPGO_PORT=7300
+      - FTPGO_MAX_SIZE=1073741824  # 1GB
+      - FTPGO_AUTH_USER=admin      # Basic Auth 用户名
+      - FTPGO_AUTH_PASS=admin123   # Basic Auth 密码
+    restart: unless-stopped
+
+volumes:
+  ftpgo-storage:
