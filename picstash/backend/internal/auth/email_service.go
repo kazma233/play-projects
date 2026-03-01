@@ -143,13 +143,18 @@ func (e *EmailService) sendWithSTARTTLSUpgrade(client *smtp.Client, to string, m
 	return e.doAuthAndSend(client, to, msg)
 }
 
-// sendWithDirectTLS 关闭明文连接，重新建立直接TLS连接
+// sendWithDirectTLS 使用直接TLS连接发送邮件
 func (e *EmailService) sendWithDirectTLS(to string, msg []byte) error {
 	addr := net.JoinHostPort(e.host, strconv.Itoa(e.port))
 
-	slog.Info("建立直接TLS连接", "addr", addr)
+	slog.Info("建立直接TLS连接", "addr", addr, "serverName", e.host)
 
 	dialer := &net.Dialer{Timeout: e.timeout}
+
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("TCP连接失败: %w", err)
+	}
 
 	tlsConfig := &tls.Config{
 		ServerName:         e.host,
@@ -157,28 +162,36 @@ func (e *EmailService) sendWithDirectTLS(to string, msg []byte) error {
 		MinVersion:         tls.VersionTLS12,
 	}
 
-	conn, err := tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
-	if err != nil {
-		return fmt.Errorf("TLS连接失败: %w", err)
+	tlsConn := tls.Client(conn, tlsConfig)
+	if err := tlsConn.Handshake(); err != nil {
+		conn.Close()
+		return fmt.Errorf("TLS握手失败: %w", err)
 	}
-	defer conn.Close()
 
-	client, err := smtp.NewClient(conn, e.host)
+	slog.Info("TLS握手成功，创建SMTP客户端")
+
+	client, err := smtp.NewClient(tlsConn, e.host)
 	if err != nil {
+		conn.Close()
 		return fmt.Errorf("创建SMTP客户端失败: %w", err)
 	}
-	defer client.Close()
 
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "localhost"
 	}
+	slog.Info("发送EHLO", "hostname", hostname)
 	if err := client.Hello(hostname); err != nil {
+		client.Close()
 		return fmt.Errorf("EHLO失败: %w", err)
 	}
 
 	slog.Info("SMTP客户端已创建，开始认证")
-	return e.doAuthAndSend(client, to, msg)
+	err = e.doAuthAndSend(client, to, msg)
+	if err != nil {
+		client.Close()
+	}
+	return err
 }
 
 // doAuthAndSend 执行认证并发送邮件
