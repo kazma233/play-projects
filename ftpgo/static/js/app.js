@@ -12,6 +12,9 @@ createApp({
         const uploadProgress = ref(0);
         const isUploading = ref(false);
         const uploadStatus = ref('');
+        const isLoading = ref(false);
+        const loadingText = ref('加载中...');
+        const loadingCount = ref(0);
         const message = ref('');
         const messageType = ref('success');
         const sortField = ref('modTime');
@@ -77,6 +80,20 @@ createApp({
             setTimeout(() => message.value = '', 3000);
         };
 
+        // Loading 控制函数 - 使用计数器处理并发请求
+        const showLoading = (text = '加载中...') => {
+            loadingCount.value++;
+            loadingText.value = text;
+            isLoading.value = true;
+        };
+
+        const hideLoading = () => {
+            loadingCount.value = Math.max(0, loadingCount.value - 1);
+            if (loadingCount.value === 0) {
+                isLoading.value = false;
+            }
+        };
+
         const getFileIcon = (file) => {
             if (file.isDir) return 'fas fa-folder text-yellow-500';
             const ext = getExt(file.name);
@@ -100,6 +117,7 @@ createApp({
 
         // API 操作
         const loadFiles = async () => {
+            showLoading('加载文件列表...');
             try {
                 const res = await fetch(`/api/browse?path=${encodeURIComponent(currentPath.value)}`);
                 const data = await res.json();
@@ -107,10 +125,13 @@ createApp({
                 selectedFiles.value = [];
             } catch (err) {
                 showMessage('加载文件失败: ' + err.message, 'error');
+            } finally {
+                hideLoading();
             }
         };
 
         const apiRequest = async (url, body, successMsg) => {
+            showLoading('处理中...');
             try {
                 const res = await fetch(url, {
                     method: 'POST',
@@ -126,6 +147,8 @@ createApp({
                 showMessage(data.error || '操作失败', 'error');
             } catch (err) {
                 showMessage('操作失败: ' + err.message, 'error');
+            } finally {
+                hideLoading();
             }
             return false;
         };
@@ -211,6 +234,7 @@ createApp({
         };
 
         const loadTextContent = async (file) => {
+            showLoading('加载文件内容...');
             try {
                 const res = await fetch(`/api/download?path=${encodeURIComponent(file.path)}`);
                 if (!res.ok) {
@@ -223,6 +247,8 @@ createApp({
                 previewContent.value = await (isPreviewTruncated.value ? blob.slice(0, MAX) : blob).text();
             } catch (err) {
                 previewContent.value = '加载文件内容失败: ' + err.message;
+            } finally {
+                hideLoading();
             }
         };
 
@@ -412,6 +438,7 @@ createApp({
 
         return {
             files, currentPath, selectedFiles, isDragging, uploadProgress, isUploading, uploadStatus,
+            isLoading, loadingText,
             message, messageType,
             showNewFolderModal, showRenameDialog, showPreview, newFolderName, renameNewName,
             previewPath, previewFileName, previewContent, isPreviewTruncated,
