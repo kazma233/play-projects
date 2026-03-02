@@ -315,7 +315,8 @@ createApp({
 
         const handleFileUpload = async (e) => {
             uploadProgress.value = 0;
-            const result = await uploadFiles(e.target.files, (p) => uploadProgress.value = p);
+            const files = [...e.target.files];
+            const result = await uploadFiles(files, (p) => uploadProgress.value = p);
             handleUploadResult(result);
             e.target.value = '';
         };
