@@ -127,9 +127,27 @@
                             <th class="px-6 py-3 text-left">
                                 <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="rounded border-gray-300">
                             </th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名称</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">大小</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">修改时间</th>
+                            <th @click="toggleSort('name')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">
+                                <span class="flex items-center">
+                                    名称
+                                    <i v-if="sortField === 'name'" :class="sortDirection === 'asc' ? 'fas fa-sort-up ml-1' : 'fas fa-sort-down ml-1'"></i>
+                                    <i v-else class="fas fa-sort ml-1 text-gray-300"></i>
+                                </span>
+                            </th>
+                            <th @click="toggleSort('size')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">
+                                <span class="flex items-center">
+                                    大小
+                                    <i v-if="sortField === 'size'" :class="sortDirection === 'asc' ? 'fas fa-sort-up ml-1' : 'fas fa-sort-down ml-1'"></i>
+                                    <i v-else class="fas fa-sort ml-1 text-gray-300"></i>
+                                </span>
+                            </th>
+                            <th @click="toggleSort('modTime')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">
+                                <span class="flex items-center">
+                                    修改时间
+                                    <i v-if="sortField === 'modTime'" :class="sortDirection === 'asc' ? 'fas fa-sort-up ml-1' : 'fas fa-sort-down ml-1'"></i>
+                                    <i v-else class="fas fa-sort ml-1 text-gray-300"></i>
+                                </span>
+                            </th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                         </tr>
                     </thead>
@@ -149,7 +167,7 @@
                         </tr>
 
                         <!-- 文件列表 -->
-                        <tr v-for="file in files" :key="file.path" class="file-item">
+                        <tr v-for="file in sortedFiles" :key="file.path" class="file-item">
                             <td class="px-6 py-4">
                                 <input type="checkbox" v-model="selectedFiles" :value="file.path" class="rounded border-gray-300">
                             </td>
@@ -277,6 +295,10 @@
                 const message = ref('');
                 const messageType = ref('success');
                 
+                // 排序状态（默认按修改时间降序）
+                const sortField = ref('modTime');
+                const sortDirection = ref('desc');
+                
                 // 弹窗状态
                 const showNewFolderModal = ref(false);
                 const showRenameDialog = ref(false);
@@ -311,6 +333,46 @@
                 const previewUrl = computed(() => `/api/download?path=${encodeURIComponent(previewPath.value)}`);
                 const isImage = computed(() => ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(getExt(previewFileName.value)));
                 const isText = computed(() => textExtensions.includes(getExt(previewFileName.value)));
+                
+                // 排序后的文件列表
+                const sortedFiles = computed(() => {
+                    const result = [...files.value];
+                    return result.sort((a, b) => {
+                        // 先按字段排序
+                        let comparison = 0;
+                        switch (sortField.value) {
+                            case 'name':
+                                comparison = a.name.localeCompare(b.name, 'zh-CN');
+                                break;
+                            case 'size':
+                                // 文件夹参与排序，用 -1 表示（升序时会排在前面）
+                                const aSize = a.isDir ? -1 : (a.size || 0);
+                                const bSize = b.isDir ? -1 : (b.size || 0);
+                                comparison = aSize - bSize;
+                                break;
+                            case 'modTime':
+                                comparison = new Date(a.modTime) - new Date(b.modTime);
+                                break;
+                        }
+                        
+                        // 应用排序方向
+                        if (sortDirection.value === 'desc') {
+                            comparison = -comparison;
+                        }
+                        
+                        // 如果字段值相等，根据排序方向决定文件夹位置
+                        // 升序：文件夹在前；降序：文件夹在后
+                        if (comparison === 0 && a.isDir !== b.isDir) {
+                            if (sortDirection.value === 'asc') {
+                                return a.isDir ? -1 : 1;
+                            } else {
+                                return a.isDir ? 1 : -1;
+                            }
+                        }
+                        
+                        return comparison;
+                    });
+                });
 
                 // 工具函数
                 const getExt = (filename) => filename.split('.').pop().toLowerCase();
@@ -382,6 +444,16 @@
 
                 const navigateUp = () => navigateTo(currentPath.value.split('/').filter(Boolean).slice(0, -1).join('/'));
                 const navigateToSegment = (index) => navigateTo(pathSegments.value.slice(0, index + 1).join('/'));
+
+                // 排序操作
+                const toggleSort = (field) => {
+                    if (sortField.value === field) {
+                        sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        sortField.value = field;
+                        sortDirection.value = 'asc';
+                    }
+                };
 
                 // 选择操作
                 const toggleSelectAll = () => {
@@ -601,7 +673,8 @@
                     showNewFolderModal, showRenameDialog, showPreview, newFolderName, renameNewName,
                     previewPath, previewFileName, previewContent, isPreviewTruncated,
                     fileInput, folderInput, pathSegments, isAllSelected, previewUrl, isImage, isText,
-                    navigateTo, navigateUp, navigateToSegment, toggleSelectAll,
+                    sortField, sortDirection, sortedFiles,
+                    navigateTo, navigateUp, navigateToSegment, toggleSelectAll, toggleSort,
                     createFolder, deleteFile, deleteSelected, showRenameModal, doRename,
                     downloadFile, downloadSelected, previewFile,
                     handleFileUpload, handleFolderUpload, handleDrop,
