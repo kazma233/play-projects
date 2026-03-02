@@ -40,11 +40,15 @@ func main() {
 				message = e.Message
 			}
 
+			log.Printf("Error: %v", err)
+
 			return c.Status(code).JSON(fiber.Map{
 				"error": message,
 			})
 		},
-		BodyLimit: int(config.MaxFileSize),
+		BodyLimit:         int(config.MaxFileSize + 4*1024*1024),
+		StreamRequestBody: true,
+		ReadBufferSize:    65536, // 64KB 读取缓冲区
 	})
 
 	// 设置中间件

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>文件管理器</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-    <script src="https://cdn.jsdelivr.net/npm/vue@3.5.29/dist/vue.global.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.5/dist/vue.global.prod.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.2.0/css/all.min.css">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -73,7 +73,7 @@
                 @dragover.prevent
                 @drop.prevent="handleDrop"
             >
-                <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-4"></i>
+                <i class="fas fa-cloud-arrow-up text-4xl text-gray-400 mb-4"></i>
                 <p class="text-gray-600">拖拽文件或文件夹到此处上传</p>
                 <p class="text-gray-400 text-sm mt-2">或在此区域按 Ctrl+V 粘贴文件/图片/文字</p>
             </div>
@@ -86,25 +86,10 @@
                             <th class="px-6 py-3 text-left">
                                 <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="rounded border-gray-300">
                             </th>
-                            <th @click="toggleSort('name')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">
+                            <th v-for="col in [{key:'name',label:'名称'},{key:'size',label:'大小'},{key:'modTime',label:'修改时间'}]" :key="col.key" @click="toggleSort(col.key)" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">
                                 <span class="flex items-center">
-                                    名称
-                                    <i v-if="sortField === 'name'" :class="sortDirection === 'asc' ? 'fas fa-sort-up ml-1' : 'fas fa-sort-down ml-1'"></i>
-                                    <i v-else class="fas fa-sort ml-1 text-gray-300"></i>
-                                </span>
-                            </th>
-                            <th @click="toggleSort('size')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">
-                                <span class="flex items-center">
-                                    大小
-                                    <i v-if="sortField === 'size'" :class="sortDirection === 'asc' ? 'fas fa-sort-up ml-1' : 'fas fa-sort-down ml-1'"></i>
-                                    <i v-else class="fas fa-sort ml-1 text-gray-300"></i>
-                                </span>
-                            </th>
-                            <th @click="toggleSort('modTime')" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">
-                                <span class="flex items-center">
-                                    修改时间
-                                    <i v-if="sortField === 'modTime'" :class="sortDirection === 'asc' ? 'fas fa-sort-up ml-1' : 'fas fa-sort-down ml-1'"></i>
-                                    <i v-else class="fas fa-sort ml-1 text-gray-300"></i>
+                                    {{ col.label }}
+                                    <i :class="sortField === col.key ? (sortDirection === 'asc' ? 'fas fa-sort-up ml-1' : 'fas fa-sort-down ml-1') : 'fas fa-sort ml-1 text-gray-300'"></i>
                                 </span>
                             </th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
@@ -116,7 +101,7 @@
                             <td class="px-6 py-4"></td>
                             <td class="px-6 py-4 whitespace-nowrap">
                                 <div class="flex items-center">
-                                    <i class="fas fa-level-up-alt text-gray-400 text-lg mr-3"></i>
+                                    <i class="fas fa-turn-up text-gray-400 text-lg mr-3"></i>
                                     <span class="text-gray-600">..</span>
                                 </div>
                             </td>
@@ -147,7 +132,7 @@
                                     <i class="fas fa-download"></i>
                                 </button>
                                 <button @click="showRenameModal(file)" class="text-yellow-600 hover:text-yellow-900 mr-3">
-                                    <i class="fas fa-edit"></i>
+                                    <i class="fas fa-pen"></i>
                                 </button>
                                 <button @click="deleteFile(file.path)" class="text-red-600 hover:text-red-900">
                                     <i class="fas fa-trash"></i>
@@ -197,7 +182,7 @@
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-lg font-bold">{{ previewFileName }}</h3>
                     <button @click="showPreview = false" class="text-gray-500 hover:text-gray-700">
-                        <i class="fas fa-times text-xl"></i>
+                        <i class="fas fa-xmark text-xl"></i>
                     </button>
                 </div>
                 <div class="flex justify-center">
@@ -223,8 +208,25 @@
             </div>
         </div>
 
-        <!-- 上传进度 -->
-        <div v-if="uploadProgress > 0 && uploadProgress < 100" class="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg p-4 w-80">
+        <!-- 全屏上传进度 -->
+        <div v-if="isUploading" class="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-8 w-96 shadow-2xl">
+                <h3 class="text-xl font-bold mb-4 text-center">正在上传</h3>
+                <div class="mb-4">
+                    <div class="w-full bg-gray-200 rounded-full h-4">
+                        <div class="bg-blue-600 h-4 rounded-full transition-all duration-300" 
+                             :style="{ width: uploadProgress + '%' }"></div>
+                    </div>
+                </div>
+                <div class="flex justify-between text-sm text-gray-600">
+                    <span>{{ uploadProgress }}%</span>
+                    <span>{{ uploadStatus }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右上角简易进度条 -->
+        <div v-if="uploadProgress > 0 && uploadProgress < 100 && !isUploading" class="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg p-4 w-80">
             <div class="flex items-center justify-between mb-2">
                 <span class="text-sm font-medium">上传中...</span>
                 <span class="text-sm text-gray-500">{{ uploadProgress }}%</span>

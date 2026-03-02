@@ -10,34 +10,25 @@ createApp({
         const selectedFiles = ref([]);
         const isDragging = ref(false);
         const uploadProgress = ref(0);
+        const isUploading = ref(false);
+        const uploadStatus = ref('');
         const message = ref('');
         const messageType = ref('success');
-        
-        // 排序状态（默认按修改时间降序）
         const sortField = ref('modTime');
         const sortDirection = ref('desc');
-        
-        // 弹窗状态
         const showNewFolderModal = ref(false);
         const showRenameDialog = ref(false);
         const showPreview = ref(false);
-        
-        // 表单数据
         const newFolderName = ref('');
         const renameOldPath = ref('');
         const renameNewName = ref('');
-        
-        // 预览状态
         const previewPath = ref('');
         const previewFileName = ref('');
         const previewContent = ref('');
         const isPreviewTruncated = ref(false);
-        
-        // DOM 引用
         const fileInput = ref(null);
         const folderInput = ref(null);
 
-        // 文本文件扩展名（按字母排序，便于维护）
         const textExtensions = [
             'bash', 'bat', 'c', 'cfg', 'cmd', 'cmake', 'conf', 'cpp', 'cs', 'css', 'dockerfile', 'dockerignore',
             'env', 'gitignore', 'go', 'h', 'hpp', 'html', 'htm', 'ini', 'java', 'js', 'json', 'jsx', 'less',
@@ -51,50 +42,35 @@ createApp({
         const previewUrl = computed(() => `/api/download?path=${encodeURIComponent(previewPath.value)}`);
         const isImage = computed(() => ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(getExt(previewFileName.value)));
         const isText = computed(() => textExtensions.includes(getExt(previewFileName.value)));
-        
-        // 排序后的文件列表
+
         const sortedFiles = computed(() => {
             const result = [...files.value];
             return result.sort((a, b) => {
-                // 先按字段排序
                 let comparison = 0;
                 switch (sortField.value) {
                     case 'name':
                         comparison = a.name.localeCompare(b.name, 'zh-CN');
                         break;
                     case 'size':
-                        // 文件夹参与排序，用 -1 表示（升序时会排在前面）
-                        const aSize = a.isDir ? -1 : (a.size || 0);
-                        const bSize = b.isDir ? -1 : (b.size || 0);
-                        comparison = aSize - bSize;
+                        comparison = (a.isDir ? -1 : (a.size || 0)) - (b.isDir ? -1 : (b.size || 0));
                         break;
                     case 'modTime':
                         comparison = new Date(a.modTime) - new Date(b.modTime);
                         break;
                 }
-                
-                // 应用排序方向
-                if (sortDirection.value === 'desc') {
-                    comparison = -comparison;
-                }
-                
-                // 如果字段值相等，根据排序方向决定文件夹位置
-                // 升序：文件夹在前；降序：文件夹在后
+
+                if (sortDirection.value === 'desc') comparison = -comparison;
+
                 if (comparison === 0 && a.isDir !== b.isDir) {
-                    if (sortDirection.value === 'asc') {
-                        return a.isDir ? -1 : 1;
-                    } else {
-                        return a.isDir ? 1 : -1;
-                    }
+                    return sortDirection.value === 'asc' ? (a.isDir ? -1 : 1) : (a.isDir ? 1 : -1);
                 }
-                
                 return comparison;
             });
         });
 
         // 工具函数
         const getExt = (filename) => filename.split('.').pop().toLowerCase();
-        
+
         const showMessage = (msg, type = 'success') => {
             message.value = msg;
             messageType.value = type;
@@ -108,7 +84,7 @@ createApp({
                 jpg: 'fas fa-image text-purple-500', jpeg: 'fas fa-image text-purple-500', png: 'fas fa-image text-purple-500', gif: 'fas fa-image text-purple-500',
                 mp4: 'fas fa-video text-red-500', mp3: 'fas fa-music text-blue-500', pdf: 'fas fa-file-pdf text-red-600',
                 doc: 'fas fa-file-word text-blue-600', docx: 'fas fa-file-word text-blue-600', xls: 'fas fa-file-excel text-green-600', xlsx: 'fas fa-file-excel text-green-600',
-                zip: 'fas fa-file-archive text-yellow-600', txt: 'fas fa-file-alt text-gray-500'
+                zip: 'fas fa-file-archive text-yellow-600', txt: 'fas fa-file-lines text-gray-500'
             };
             return icons[ext] || 'fas fa-file text-gray-400';
         };
@@ -160,7 +136,7 @@ createApp({
             loadFiles();
         };
 
-        const navigateUp = () => navigateTo(currentPath.value.split('/').filter(Boolean).slice(0, -1).join('/'));
+        const navigateUp = () => navigateTo(pathSegments.value.slice(0, -1).join('/'));
         const navigateToSegment = (index) => navigateTo(pathSegments.value.slice(0, index + 1).join('/'));
 
         // 排序操作
@@ -173,7 +149,6 @@ createApp({
             }
         };
 
-        // 选择操作
         const toggleSelectAll = () => {
             selectedFiles.value = isAllSelected.value ? [] : files.value.map(f => f.path);
         };
@@ -192,9 +167,8 @@ createApp({
         };
 
         const deleteSelected = async () => {
-            if (!selectedFiles.value.length) return;
-            if (!window.confirm(`确定要删除选中的 ${selectedFiles.value.length} 项吗？`)) return;
-            
+            if (!selectedFiles.value.length || !window.confirm(`确定要删除选中的 ${selectedFiles.value.length} 项吗？`)) return;
+
             let success = 0, fail = 0;
             for (const path of selectedFiles.value) {
                 (await deleteFile(path, false)) ? success++ : fail++;
@@ -252,41 +226,79 @@ createApp({
             }
         };
 
-        // 上传
-        const uploadFiles = async (fileList) => {
-            if (!fileList?.length) return;
-            
-            const formData = new FormData();
-            for (const file of fileList) {
-                formData.append('files', file);
-                formData.append('relativePaths', file.relativePath || file.name);
-            }
+        // 上传处理 - 提取公共的上传结果处理函数
+        const handleUploadResult = (result, actionName = '上传') => {
+            uploadProgress.value = 100;
+            const { uploaded, errors } = result;
 
-            try {
-                uploadProgress.value = 0;
-                const res = await fetch(`/api/upload?path=${encodeURIComponent(currentPath.value)}`, {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await res.json();
-                res.ok ? showMessage(`上传成功: ${data.uploaded.length} 个文件`) : showMessage(data.error || '上传失败', 'error');
-                if (res.ok) loadFiles();
-            } catch (err) {
-                showMessage('上传失败: ' + err.message, 'error');
-            } finally {
-                uploadProgress.value = 100;
-                setTimeout(() => uploadProgress.value = 0, 500);
+            if (errors.length > 0 && uploaded === 0) {
+                showMessage(`${actionName}失败: ${errors.join(', ')}`, 'error');
+            } else if (errors.length > 0) {
+                showMessage(`${actionName}成功: ${uploaded} 个文件，失败: ${errors.join(', ')}`, 'error');
+                loadFiles();
+            } else {
+                showMessage(`${actionName}成功: ${uploaded} 个文件`);
+                loadFiles();
             }
+            setTimeout(() => uploadProgress.value = 0, 500);
         };
 
-        const handleFileUpload = (e) => {
-            uploadFiles(e.target.files);
+        const uploadFiles = async (fileList, onProgress) => {
+            if (!fileList?.length) return { uploaded: 0, errors: [] };
+
+            isUploading.value = true;
+            uploadStatus.value = `准备上传 ${fileList.length} 个文件...`;
+
+            const BATCH_SIZE = 50;
+            let uploadedCount = 0;
+            let errorMessages = [];
+
+            const totalBatches = Math.ceil(fileList.length / BATCH_SIZE);
+            for (let i = 0; i < fileList.length; i += BATCH_SIZE) {
+                const batch = fileList.slice(i, i + BATCH_SIZE);
+                const formData = new FormData();
+                const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
+
+                uploadStatus.value = `上传中 ${currentBatch}/${totalBatches}...`;
+
+                for (const file of batch) {
+                    formData.append('files', file);
+                    formData.append('relativePaths', file.relativePath || file.name);
+                }
+
+                try {
+                    const res = await fetch(`/api/upload?path=${encodeURIComponent(currentPath.value)}`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+
+                    if (data.uploaded) uploadedCount += data.uploaded.length;
+                    if (data.errors) errorMessages.push(...data.errors);
+                    if (onProgress) onProgress(Math.min((uploadedCount / fileList.length) * 100, 100));
+                } catch (err) {
+                    const batchNames = batch.slice(0, 3).map(f => f.name).join(', ');
+                    const more = batch.length > 3 ? ` (+${batch.length - 3} more)` : '';
+                    errorMessages.push(`批次 ${Math.floor(i / BATCH_SIZE) + 1} (${batchNames}${more}): ${err.message}`);
+                }
+            }
+
+            isUploading.value = false;
+            return { uploaded: uploadedCount, errors: errorMessages };
+        };
+
+        const handleFileUpload = async (e) => {
+            uploadProgress.value = 0;
+            const result = await uploadFiles(e.target.files, (p) => uploadProgress.value = p);
+            handleUploadResult(result);
             e.target.value = '';
         };
 
-        const handleFolderUpload = (e) => {
+        const handleFolderUpload = async (e) => {
             const files = [...e.target.files].map(f => (f.relativePath = f.webkitRelativePath || f.name, f));
-            uploadFiles(files);
+            uploadProgress.value = 0;
+            const result = await uploadFiles(files, (p) => uploadProgress.value = p);
+            handleUploadResult(result);
             e.target.value = '';
         };
 
@@ -310,22 +322,29 @@ createApp({
             isDragging.value = false;
             const result = [];
             const items = e.dataTransfer.items;
-            
-            if (items?.[0] && typeof items[0].webkitGetAsEntry === 'function') {
+
+            if (items?.length > 0 && typeof items[0].webkitGetAsEntry === 'function') {
+                const entries = [];
                 for (let i = 0; i < items.length; i++) {
                     const entry = items[i].webkitGetAsEntry();
-                    if (entry) await traverseFileTree(entry, '', result);
+                    if (entry) entries.push(entry);
                 }
+                await Promise.all(entries.map(entry => traverseFileTree(entry, '', result)));
             } else {
                 for (const file of e.dataTransfer.files) {
                     file.relativePath = file.webkitRelativePath || file.name;
                     result.push(file);
                 }
             }
-            await uploadFiles(result);
+
+            if (result.length > 0) {
+                uploadProgress.value = 0;
+                const uploadResult = await uploadFiles(result, (p) => uploadProgress.value = p);
+                handleUploadResult(uploadResult);
+            }
         };
 
-        // 剪贴板
+        // 剪贴板处理 - 简化重复的上传逻辑
         const generateHash = async (data) => {
             const buffer = data instanceof Blob ? await data.arrayBuffer() : new TextEncoder().encode(data);
             const view = new Uint8Array(buffer);
@@ -340,6 +359,12 @@ createApp({
             return `clipboard_${date}_${await generateHash(content)}.${ext}`;
         };
 
+        const uploadFromClipboard = async (items, actionName) => {
+            uploadProgress.value = 0;
+            const result = await uploadFiles(items, (p) => uploadProgress.value = p);
+            handleUploadResult(result, actionName);
+        };
+
         const handlePaste = async (e) => {
             const data = e.clipboardData || window.clipboardData;
             if (!data) return;
@@ -350,7 +375,7 @@ createApp({
                     const name = await generateFilename(getExt(f.name) || 'bin', f);
                     return Object.assign(new File([f], name, { type: f.type }), { relativePath: name });
                 }));
-                await uploadFiles(files);
+                await uploadFromClipboard(files, '上传');
                 return;
             }
 
@@ -366,7 +391,7 @@ createApp({
                 }
             }
             if (images.length) {
-                await uploadFiles(images);
+                await uploadFromClipboard(images, '上传');
                 return;
             }
 
@@ -375,8 +400,7 @@ createApp({
             if (text?.trim()) {
                 const name = await generateFilename('txt', text);
                 const file = Object.assign(new File([text], name, { type: 'text/plain' }), { relativePath: name });
-                await uploadFiles([file]);
-                showMessage(`已创建文本文件: ${name}`);
+                await uploadFromClipboard([file], '创建');
             }
         };
 
@@ -387,7 +411,8 @@ createApp({
         onUnmounted(() => document.removeEventListener('paste', handlePaste));
 
         return {
-            files, currentPath, selectedFiles, isDragging, uploadProgress, message, messageType,
+            files, currentPath, selectedFiles, isDragging, uploadProgress, isUploading, uploadStatus,
+            message, messageType,
             showNewFolderModal, showRenameDialog, showPreview, newFolderName, renameNewName,
             previewPath, previewFileName, previewContent, isPreviewTruncated,
             fileInput, folderInput, pathSegments, isAllSelected, previewUrl, isImage, isText,
