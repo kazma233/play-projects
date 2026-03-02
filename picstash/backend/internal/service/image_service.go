@@ -13,6 +13,7 @@ import (
 	"picstash/internal/model"
 	"picstash/internal/repository"
 	"picstash/internal/storage"
+	"picstash/pkg/imageutil"
 
 	"github.com/google/uuid"
 )
@@ -126,7 +127,7 @@ func (s *ImageService) UploadWithContent(
 
 	slog.Info("生成文件路径", "filename", filename, "path", storagePath)
 
-	width, height, mimeType, err := storage.GetImageInfo(content)
+	width, height, mimeType, err := imageutil.GetImageInfo(content)
 	if err != nil {
 		slog.Warn("获取图片信息失败，使用默认值", "error", err)
 		width, height, mimeType = 0, 0, "image/jpeg"
@@ -135,7 +136,7 @@ func (s *ImageService) UploadWithContent(
 	slog.Info("图片信息", "width", width, "height", height, "mime_type", mimeType)
 
 	if mimeType == "" {
-		mimeType = storage.GetMimeType(filename)
+		mimeType = imageutil.GetMimeType(filename)
 		slog.Warn("无法检测MIME类型，使用扩展名判断", "filename", filename, "mime_type", mimeType)
 	}
 
@@ -199,7 +200,7 @@ func (s *ImageService) UploadWithContent(
 	if thumbnailContent != nil && len(thumbnailContent) > 0 {
 		slog.Info("使用前端传入的缩略图", "size", len(thumbnailContent))
 		thumbData := thumbnailContent
-		thumbWidth, thumbHeight, _, thumbErr := storage.GetImageInfo(thumbData)
+		thumbWidth, thumbHeight, _, thumbErr := imageutil.GetImageInfo(thumbData)
 		if thumbErr != nil {
 			slog.Warn("获取缩略图信息失败", "error", thumbErr)
 		} else {
@@ -525,7 +526,7 @@ func (s *ImageService) SyncFromStorage(ctx context.Context, triggeredBy string) 
 			if err != nil {
 				slog.Warn("获取文件内容失败，无法解析分辨率", "path", storageFile.Path, "error", err)
 			} else {
-				detectedWidth, detectedHeight, _, imgErr := storage.GetImageInfo(content)
+				detectedWidth, detectedHeight, _, imgErr := imageutil.GetImageInfo(content)
 				if imgErr != nil {
 					slog.Warn("解析图片分辨率失败", "path", storageFile.Path, "error", imgErr)
 				} else {
@@ -629,7 +630,7 @@ func (s *ImageService) updateDerivedImageMeta(
 		if err != nil {
 			slog.Warn("获取缩略图内容失败，无法解析分辨率", "path", thumbFile.Path, "error", err)
 		} else {
-			detectedWidth, detectedHeight, _, imgErr := storage.GetImageInfo(thumbContent)
+			detectedWidth, detectedHeight, _, imgErr := imageutil.GetImageInfo(thumbContent)
 			if imgErr != nil {
 				slog.Warn("解析缩略图分辨率失败", "path", thumbFile.Path, "error", imgErr)
 			} else {
@@ -667,7 +668,7 @@ func (s *ImageService) createImageFromStorage(ctx context.Context, tx *sql.Tx, s
 	mimeType := "image/jpeg"
 	if idx := strings.LastIndex(storageFile.Path, "."); idx > 0 {
 		ext := strings.ToLower(storageFile.Path[idx:])
-		mimeType = storage.GetMimeType(storageFile.Path)
+		mimeType = imageutil.GetMimeType(storageFile.Path)
 		_ = ext
 	}
 
@@ -676,7 +677,7 @@ func (s *ImageService) createImageFromStorage(ctx context.Context, tx *sql.Tx, s
 	if err != nil {
 		slog.Warn("获取文件内容失败，无法解析分辨率", "path", storageFile.Path, "error", err)
 	} else {
-		detectedWidth, detectedHeight, detectedMimeType, imgErr := storage.GetImageInfo(content)
+		detectedWidth, detectedHeight, detectedMimeType, imgErr := imageutil.GetImageInfo(content)
 		if imgErr != nil {
 			slog.Warn("解析图片分辨率失败", "path", storageFile.Path, "error", imgErr)
 		} else {
