@@ -75,6 +75,7 @@ type LogConfig struct {
 
 type AuthConfig struct {
 	AllowedEmails []string `mapstructure:"allowed_emails"`
+	HomeAuth      bool     `mapstructure:"home_auth"`
 }
 
 func Load(configPath string) (*Config, error) {

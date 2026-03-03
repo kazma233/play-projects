@@ -150,8 +150,13 @@ auth:
   allowed_emails:
     - admin@example.com
     - another@example.com
+  home_auth: false          # 首页访问控制: true需要登录才能查看，false允许游客访问（默认）
 ```
-允许登录的邮箱地址列表（支持通配符，如 `*@example.com`）
+
+- **allowed_emails**: 允许登录的邮箱地址列表（支持通配符，如 `*@example.com`）
+- **home_auth**: 控制首页内容访问权限
+  - `false`（默认）: 任何人都能查看首页图片
+  - `true`: 未登录用户只能看到登录提示，图片列表需要登录后才能查看
 
 ### 上传配置
 ```yaml
@@ -180,7 +185,7 @@ GET  /api/tags/:id/images     # 按标签ID筛选图片
 GET  /api/sync/logs           # 获取同步日志列表（分页）
 GET  /api/sync/logs/:id       # 获取同步日志详情
 GET  /api/sync/logs/:id/files # 获取同步日志文件列表
-GET  /api/config/public       # 获取公开配置
+GET  /api/config              # 获取前端配置（home_auth 等）
 ```
 
 ### 认证接口
@@ -198,8 +203,6 @@ PUT    /api/images/:id/tags   # 更新图片标签
 POST   /api/tags              # 创建标签
 PUT    /api/tags/:id          # 更新标签
 DELETE /api/tags/:id          # 删除标签
-GET    /api/config            # 获取完整配置
-PUT    /api/config            # 更新配置
 ```
 
 ## 项目结构

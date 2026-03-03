@@ -46,3 +46,4 @@ auth:
   allowed_emails:
     - admin@example.com
     - another@example.com
+  home_auth: true  # true表示需要登录才能查看首页，默认false

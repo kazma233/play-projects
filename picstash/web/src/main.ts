@@ -13,5 +13,6 @@ app.use(router);
 
 const authStore = useAuthStore();
 authStore.initFromStorage();
+authStore.loadConfig();
 
 app.mount("#app");

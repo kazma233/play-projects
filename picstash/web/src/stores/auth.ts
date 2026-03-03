@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { User } from "@/types";
-import { authApi } from "@/api";
+import { authApi, configApi } from "@/api";
 
 interface VerifyResponse {
   token: string;
@@ -11,6 +11,7 @@ interface VerifyResponse {
 export const useAuthStore = defineStore("auth", () => {
   const user = ref<User | null>(null);
   const isAuthenticated = computed(() => !!user.value);
+  const homeAuth = ref(false);
 
   const sendCode = async (email: string) => {
     const res = await authApi.sendCode(email);
@@ -42,12 +43,24 @@ export const useAuthStore = defineStore("auth", () => {
     }
   };
 
+  const loadConfig = async () => {
+    try {
+      const res = await configApi.getConfig();
+      homeAuth.value = res.data.home_auth;
+    } catch (error) {
+      console.error("Failed to load config:", error);
+      homeAuth.value = false;
+    }
+  };
+
   return {
     user,
     isAuthenticated,
+    homeAuth,
     sendCode,
     verifyCode,
     logout,
     initFromStorage,
+    loadConfig,
   };
 });

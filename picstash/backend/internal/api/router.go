@@ -26,22 +26,32 @@ func SetupRoutes(
 	imageHandler := handler.NewImageHandler(imageService)
 	tagHandler := handler.NewTagHandler(tagService)
 	syncLogHandler := handler.NewSyncLogHandler(db)
+	configHandler := handler.NewConfigHandler(cfg.Auth.HomeAuth)
 
 	api := app.Group("/api")
 
+	// 完全公开接口
 	public := api.Group("")
-	public.Get("/images", imageHandler.GetList)
-	public.Get("/images/:id", imageHandler.GetByID)
-	public.Get("/tags", tagHandler.GetAll)
-	public.Get("/tags/:id/images", tagHandler.GetByImageID)
-	public.Get("/sync/logs", syncLogHandler.GetList)
-	public.Get("/sync/logs/:id", syncLogHandler.GetByID)
-	public.Get("/sync/logs/:id/files", syncLogHandler.GetFileLogs)
+	public.Get("/config", configHandler.GetConfig)
 
 	authGroup := api.Group("/auth")
 	authGroup.Post("/send-code", authHandler.SendCode)
 	authGroup.Post("/verify", authHandler.VerifyCode)
 
+	// 根据 home_auth 配置决定是否保护图片相关接口
+	contentGroup := api.Group("")
+	if cfg.Auth.HomeAuth {
+		contentGroup.Use(middleware.JWTAuth(jwtService))
+	}
+	contentGroup.Get("/images", imageHandler.GetList)
+	contentGroup.Get("/images/:id", imageHandler.GetByID)
+	contentGroup.Get("/tags", tagHandler.GetAll)
+	contentGroup.Get("/tags/:id/images", tagHandler.GetByImageID)
+	contentGroup.Get("/sync/logs", syncLogHandler.GetList)
+	contentGroup.Get("/sync/logs/:id", syncLogHandler.GetByID)
+	contentGroup.Get("/sync/logs/:id/files", syncLogHandler.GetFileLogs)
+
+	// 受保护接口（始终需要登录）
 	protected := api.Group("")
 	protected.Use(middleware.JWTAuth(jwtService))
 	protected.Post("/images/upload", imageHandler.Upload)
