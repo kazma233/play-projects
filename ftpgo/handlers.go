@@ -3,11 +3,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -95,7 +99,7 @@ func (h *Handlers) Mkdir(c fiber.Ctx) error {
 	})
 }
 
-// Upload 上传文件
+// Upload 上传文件 - 并发处理
 func (h *Handlers) Upload(c fiber.Ctx) error {
 	path := c.Query("path", "/")
 
@@ -122,51 +126,86 @@ func (h *Handlers) Upload(c fiber.Ctx) error {
 		})
 	}
 
-	var uploaded []string
-	var errors []string
+	// 使用并发处理文件上传
+	type uploadResult struct {
+		filename string
+		err      error
+	}
+
+	// 控制并发数（最多同时处理5个文件）
+	const maxWorkers = 5
+	semaphore := make(chan struct{}, maxWorkers)
+	results := make(chan uploadResult, len(files))
+	var wg sync.WaitGroup
 
 	for i, file := range files {
-		// 获取相对路径（如果有）
-		relativePath := file.Filename
-		if i < len(relativePaths) && relativePaths[i] != "" {
-			relativePath = relativePaths[i]
+		wg.Add(1)
+		go func(idx int, f *multipart.FileHeader) {
+			defer wg.Done()
+
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			// 获取相对路径
+			relativePath := f.Filename
+			if idx < len(relativePaths) && relativePaths[idx] != "" {
+				relativePath = relativePaths[idx]
+			}
+
+			// 检查文件大小
+			if f.Size > h.config.MaxFileSize {
+				results <- uploadResult{
+					filename: f.Filename,
+					err:      fmt.Errorf("file too large"),
+				}
+				return
+			}
+
+			// 打开上传的文件
+			src, err := f.Open()
+			if err != nil {
+				results <- uploadResult{
+					filename: f.Filename,
+					err:      err,
+				}
+				return
+			}
+			defer src.Close()
+
+			// 保存文件
+			normalizedPath := filepath.FromSlash(relativePath)
+			filePath := filepath.Join(path, normalizedPath)
+
+			if err := h.fs.SaveFile(filePath, src); err != nil {
+				results <- uploadResult{
+					filename: f.Filename,
+					err:      err,
+				}
+				return
+			}
+
+			results <- uploadResult{
+				filename: relativePath,
+				err:      nil,
+			}
+		}(i, file)
+	}
+
+	// 等待所有上传完成
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// 收集结果
+	var uploaded []string
+	var errors []string
+	for res := range results {
+		if res.err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", res.filename, res.err))
+		} else {
+			uploaded = append(uploaded, res.filename)
 		}
-
-		log.Printf("Processing file %d: %s (size: %d), relativePath: %s", i, file.Filename, file.Size, relativePath)
-
-		// 检查文件大小
-		if file.Size > h.config.MaxFileSize {
-			log.Printf("File too large: %s (size: %d, limit: %d)", file.Filename, file.Size, h.config.MaxFileSize)
-			errors = append(errors, fmt.Sprintf("%s: file too large", file.Filename))
-			continue
-		}
-
-		// 打开上传的文件
-		src, err := file.Open()
-		if err != nil {
-			log.Printf("Failed to open file: %s, error: %v", file.Filename, err)
-			errors = append(errors, fmt.Sprintf("%s: %v", file.Filename, err))
-			continue
-		}
-
-		// 保存文件（使用相对路径）
-		// 需要将路径分隔符转换为系统特定的分隔符
-		normalizedPath := filepath.FromSlash(relativePath)
-		filePath := filepath.Join(path, normalizedPath)
-		log.Printf("Saving file to: %s", filePath)
-
-		if err := h.fs.SaveFile(filePath, src); err != nil {
-			log.Printf("Failed to save file: %s, error: %v", filePath, err)
-			errors = append(errors, fmt.Sprintf("%s: %v", file.Filename, err))
-			src.Close()
-			continue
-		}
-
-		// 立即关闭文件句柄以避免资源泄漏
-		src.Close()
-
-		log.Printf("Successfully saved file: %s", filePath)
-		uploaded = append(uploaded, relativePath)
 	}
 
 	response := fiber.Map{
@@ -262,7 +301,7 @@ func (h *Handlers) Rename(c fiber.Ctx) error {
 	})
 }
 
-// Download 下载文件
+// Download 下载文件 - 支持 Range 请求
 func (h *Handlers) Download(c fiber.Ctx) error {
 	path := c.Query("path", "")
 
@@ -277,41 +316,142 @@ func (h *Handlers) Download(c fiber.Ctx) error {
 		path = "/" + path
 	}
 
-	// 获取文件信息
-	info, err := h.fs.GetFile(path)
+	// 安全检查路径（避免目录遍历）
+	cleanPath := strings.TrimPrefix(path, "/")
+	cleanPath = filepath.Clean(cleanPath)
+	fullPath := filepath.Join(h.config.RootPath, cleanPath)
+
+	// 确保路径在根目录内
+	cleanFullPath := filepath.Clean(fullPath)
+	cleanRoot := filepath.Clean(h.config.RootPath)
+	if !strings.HasPrefix(cleanFullPath, cleanRoot) {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{
+			"error": "invalid path",
+		})
+	}
+
+	// 检查文件是否存在且不是目录
+	info, err := os.Stat(fullPath)
 	if err != nil {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{
 			"error": "file not found",
 		})
 	}
 
-	if info.IsDir {
+	if info.IsDir() {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": "cannot download directory directly",
 		})
 	}
 
-	// 构建完整文件路径
-	fullPath := filepath.Join(h.config.RootPath, path)
-
 	// 检查是否为内联预览模式
 	inline := c.Query("inline", "false") == "true"
 
-	// 设置内容类型
-	c.Set("Content-Type", info.MimeType)
+	// 获取 MIME 类型
+	mimeType := getMimeType(filepath.Ext(info.Name()))
+	c.Set("Content-Type", mimeType)
+	c.Set("Accept-Ranges", "bytes")
 
 	if inline {
-		// 内联模式：在浏览器中显示内容（用于预览）
-		c.Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", info.Name))
+		c.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", info.Name()))
 	} else {
-		// 下载模式：强制下载文件
-		c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", info.Name))
+		c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", info.Name()))
 	}
+
+	// 处理 Range 请求（用于预览时只获取部分内容）
+	rangeHeader := string(c.Request().Header.Peek("Range"))
+	if rangeHeader != "" {
+		return h.serveRange(fullPath, rangeHeader, info.Size(), c)
+	}
+
+	// 设置缓存头
+	c.Set("Cache-Control", "public, max-age=3600")
 
 	return c.SendFile(fullPath)
 }
 
-// DownloadZip 批量下载为ZIP
+// getMimeType 获取文件的 MIME 类型
+func getMimeType(ext string) string {
+	mimeTypes := map[string]string{
+		".jpg":  "image/jpeg",
+		".jpeg": "image/jpeg",
+		".png":  "image/png",
+		".gif":  "image/gif",
+		".webp": "image/webp",
+		".txt":  "text/plain",
+		".md":   "text/markdown",
+		".html": "text/html",
+		".css":  "text/css",
+		".js":   "application/javascript",
+		".json": "application/json",
+		".pdf":  "application/pdf",
+		".zip":  "application/zip",
+		".mp4":  "video/mp4",
+		".mp3":  "audio/mpeg",
+	}
+	if mt, ok := mimeTypes[strings.ToLower(ext)]; ok {
+		return mt
+	}
+	return "application/octet-stream"
+}
+
+// serveRange 处理 Range 请求
+func (h *Handlers) serveRange(filePath, rangeHeader string, fileSize int64, c fiber.Ctx) error {
+	// 解析 Range: bytes=start-end
+	parts := strings.Split(strings.TrimPrefix(rangeHeader, "bytes="), "-")
+	if len(parts) != 2 {
+		return c.Status(http.StatusRequestedRangeNotSatisfiable).SendString("Invalid Range")
+	}
+
+	start, _ := strconv.ParseInt(parts[0], 10, 64)
+	var end int64
+	if parts[1] == "" {
+		end = fileSize - 1
+	} else {
+		end, _ = strconv.ParseInt(parts[1], 10, 64)
+	}
+
+	// 如果请求的范围超出文件大小，调整 end 值（而不是返回 416）
+	if start < 0 || start >= fileSize {
+		return c.Status(http.StatusRequestedRangeNotSatisfiable).SendString("Invalid Range")
+	}
+	if end >= fileSize {
+		end = fileSize - 1
+	}
+	if start > end {
+		return c.Status(http.StatusRequestedRangeNotSatisfiable).SendString("Invalid Range")
+	}
+
+	contentLength := end - start + 1
+
+	// 读取指定范围的数据到 buffer
+	file, err := os.Open(filePath)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).SendString("Failed to open file")
+	}
+	defer file.Close()
+
+	_, err = file.Seek(start, 0)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).SendString("Failed to seek file")
+	}
+
+	// 读取指定长度的数据到 buffer，避免流的问题
+	buffer := make([]byte, contentLength)
+	_, err = io.ReadFull(file, buffer)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return c.Status(http.StatusInternalServerError).SendString("Failed to read file")
+	}
+
+	c.Status(http.StatusPartialContent)
+	c.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
+	c.Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	c.Set("Cache-Control", "public, max-age=3600")
+
+	return c.Send(buffer)
+}
+
+// DownloadZip 批量下载为ZIP - 流式传输，无需临时文件
 func (h *Handlers) DownloadZip(c fiber.Ctx) error {
 	pathsStr := c.Query("paths", "")
 
@@ -334,27 +474,18 @@ func (h *Handlers) DownloadZip(c fiber.Ctx) error {
 		})
 	}
 
-	// 创建临时ZIP文件
-	tempFile, err := os.CreateTemp("", "download-*.zip")
-	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to create temp file",
-		})
-	}
-	defer os.Remove(tempFile.Name())
-
-	// 创建ZIP文件
-	if err := h.fs.CreateZip(paths, tempFile); err != nil {
-		tempFile.Close()
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-			"error": err.Error(),
-		})
-	}
-	tempFile.Close()
-
-	// 设置下载头并发送文件
+	// 设置流式响应头
 	c.Set("Content-Disposition", "attachment; filename=\"download.zip\"")
 	c.Set("Content-Type", "application/zip")
+	c.Set("Transfer-Encoding", "chunked")
+	c.Status(http.StatusOK)
 
-	return c.SendFile(tempFile.Name())
+	// 使用流式 writer，边压缩边发送，不占用临时磁盘空间
+	writer := c.Response().BodyWriter()
+	if err := h.fs.CreateZip(paths, writer); err != nil {
+		log.Printf("CreateZip error: %v", err)
+		// 由于已经开始发送，无法返回错误 JSON，记录日志
+	}
+
+	return nil
 }

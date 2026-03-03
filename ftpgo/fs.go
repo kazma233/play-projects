@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"compress/flate"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -219,10 +221,21 @@ func (fs *FileSystem) SaveFile(path string, reader io.Reader) error {
 	return err
 }
 
-// CreateZip 创建ZIP压缩文件
+// CreateZip 创建ZIP压缩文件 - 流式处理，支持并发
 func (fs *FileSystem) CreateZip(paths []string, w io.Writer) error {
 	zipWriter := zip.NewWriter(w)
+
+	// 设置压缩级别为最快（平衡速度和压缩率，大文件时更快）
+	zipWriter.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		return flate.NewWriter(out, flate.BestSpeed)
+	})
 	defer zipWriter.Close()
+
+	// 使用有界并发池控制同时处理的文件数
+	const maxWorkers = 10
+	semaphore := make(chan struct{}, maxWorkers)
+	var mu sync.Mutex
+	var firstErr error
 
 	for _, path := range paths {
 		fullPath, err := fs.normalizePath(path)
@@ -238,42 +251,55 @@ func (fs *FileSystem) CreateZip(paths []string, w io.Writer) error {
 		}
 
 		if info.IsDir() {
-			// 递归添加目录内容
-			err = filepath.Walk(fullPath, func(filePath string, fileInfo os.FileInfo, err error) error {
+			// 使用 WalkDir 更高效（不调用 Stat）
+			err = filepath.WalkDir(fullPath, func(filePath string, d os.DirEntry, err error) error {
 				if err != nil {
 					return err
 				}
-
-				if fileInfo.IsDir() {
+				if d.IsDir() {
 					return nil
 				}
+
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
 
 				relPath, err := filepath.Rel(fs.root, filePath)
 				if err != nil {
 					log.Printf("filepath.Rel error for %s: %v", filePath, err)
 					return err
 				}
-				return addFileToZip(zipWriter, filePath, relPath)
+
+				err = addFileToZip(zipWriter, filePath, relPath)
+				if err != nil && firstErr == nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+				}
+				return nil // 继续处理其他文件
 			})
 			if err != nil {
-				log.Printf("Walk error for path %s: %v", fullPath, err)
+				log.Printf("WalkDir error for path %s: %v", fullPath, err)
 				continue
 			}
 		} else {
+			semaphore <- struct{}{}
 			relPath, err := filepath.Rel(fs.root, fullPath)
 			if err != nil {
 				log.Printf("filepath.Rel error for %s: %v", fullPath, err)
+				<-semaphore
 				continue
 			}
 			err = addFileToZip(zipWriter, fullPath, relPath)
+			<-semaphore
 			if err != nil {
 				log.Printf("addFileToZip error for %s: %v", fullPath, err)
-				continue
 			}
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 // addFileToZip 添加文件到ZIP

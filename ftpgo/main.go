@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
 	"github.com/gofiber/fiber/v3/middleware/static"
 )
 
@@ -53,6 +54,11 @@ func main() {
 
 	// 设置中间件
 	SetupMiddleware(app)
+
+	// 启用Gzip/Brotli压缩（对API响应和静态资源）
+	app.Use(compress.New(compress.Config{
+		Level: compress.LevelBestSpeed, // 最快压缩级别，减少CPU使用
+	}))
 
 	// 静态文件服务 - 从embed.FS提供
 	templatesFS, err := fs.Sub(embedFS, "templates")

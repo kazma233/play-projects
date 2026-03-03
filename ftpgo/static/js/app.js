@@ -49,25 +49,26 @@ createApp({
         const sortedFiles = computed(() => {
             const result = [...files.value];
             return result.sort((a, b) => {
+                // 目录始终排在前面，保持稳定性
+                if (a.isDir !== b.isDir) {
+                    return a.isDir ? -1 : 1;
+                }
+
                 let comparison = 0;
                 switch (sortField.value) {
                     case 'name':
-                        comparison = a.name.localeCompare(b.name, 'zh-CN');
+                        // 使用预创建的 Collator 提高性能
+                        comparison = collator.compare(a.name, b.name);
                         break;
                     case 'size':
-                        comparison = (a.isDir ? -1 : (a.size || 0)) - (b.isDir ? -1 : (b.size || 0));
+                        comparison = (a.size || 0) - (b.size || 0);
                         break;
                     case 'modTime':
                         comparison = new Date(a.modTime) - new Date(b.modTime);
                         break;
                 }
 
-                if (sortDirection.value === 'desc') comparison = -comparison;
-
-                if (comparison === 0 && a.isDir !== b.isDir) {
-                    return sortDirection.value === 'asc' ? (a.isDir ? -1 : 1) : (a.isDir ? 1 : -1);
-                }
-                return comparison;
+                return sortDirection.value === 'desc' ? -comparison : comparison;
             });
         });
 
@@ -189,14 +190,47 @@ createApp({
             return apiRequest('/api/delete', { path }, '删除成功');
         };
 
+        // 批量删除 - 并发处理，提高速度
         const deleteSelected = async () => {
             if (!selectedFiles.value.length || !window.confirm(`确定要删除选中的 ${selectedFiles.value.length} 项吗？`)) return;
 
+            const CONCURRENT_LIMIT = 5; // 同时最多5个并发删除
+            const queue = [...selectedFiles.value];
             let success = 0, fail = 0;
-            for (const path of selectedFiles.value) {
-                (await deleteFile(path, false)) ? success++ : fail++;
-            }
-            showMessage(fail ? `删除完成：成功 ${success} 项，失败 ${fail} 项` : `成功删除 ${success} 项`, fail ? 'error' : 'success');
+
+            // 创建并发工作器
+            const workers = Array(CONCURRENT_LIMIT).fill().map(async () => {
+                while (queue.length > 0) {
+                    const path = queue.shift();
+                    try {
+                        const res = await fetch('/api/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path })
+                        });
+                        if (res.ok) {
+                            success++;
+                        } else {
+                            fail++;
+                        }
+                    } catch (e) {
+                        fail++;
+                    }
+                }
+            });
+
+            showLoading(`正在删除 ${selectedFiles.value.length} 个文件...`);
+            
+            await Promise.all(workers);
+            
+            hideLoading();
+            showMessage(
+                fail ? `删除完成：成功 ${success} 项，失败 ${fail} 项` : `成功删除 ${success} 项`,
+                fail ? 'error' : 'success'
+            );
+            
+            selectedFiles.value = [];
+            loadFiles();
         };
 
         const showRenameModal = (file) => {
@@ -236,15 +270,35 @@ createApp({
         const loadTextContent = async (file) => {
             showLoading('加载文件内容...');
             try {
-                const res = await fetch(`/api/download?path=${encodeURIComponent(file.path)}`);
-                if (!res.ok) {
+                const MAX_PREVIEW_SIZE = 128 * 1024; // 128KB
+                
+                // 使用 Range 请求只获取前128KB，减少网络和内存开销
+                const res = await fetch(`/api/download?path=${encodeURIComponent(file.path)}&inline=true`, {
+                    headers: {
+                        'Range': `bytes=0-${MAX_PREVIEW_SIZE - 1}`
+                    }
+                });
+                
+                if (res.status === 206) {
+                    // 服务器支持 Range 请求 (Partial Content)
+                    const contentRange = res.headers.get('Content-Range');
+                    const totalMatch = contentRange?.match(/\/([0-9]+)$/);
+                    const totalSize = totalMatch ? parseInt(totalMatch[1]) : 0;
+                    isPreviewTruncated.value = totalSize > MAX_PREVIEW_SIZE;
+                    
+                    const blob = await res.blob();
+                    previewContent.value = await blob.text();
+                } else if (res.ok) {
+                    // 服务器不支持 Range，回退到原有逻辑
+                    const blob = await res.blob();
+                    isPreviewTruncated.value = blob.size > MAX_PREVIEW_SIZE;
+                    previewContent.value = await (isPreviewTruncated.value 
+                        ? blob.slice(0, MAX_PREVIEW_SIZE) 
+                        : blob
+                    ).text();
+                } else {
                     previewContent.value = '无法加载文件内容';
-                    return;
                 }
-                const blob = await res.blob();
-                const MAX = 128 * 1024;
-                isPreviewTruncated.value = blob.size > MAX;
-                previewContent.value = await (isPreviewTruncated.value ? blob.slice(0, MAX) : blob).text();
             } catch (err) {
                 previewContent.value = '加载文件内容失败: ' + err.message;
             } finally {
@@ -256,14 +310,15 @@ createApp({
         const handleUploadResult = (result, actionName = '上传') => {
             uploadProgress.value = 100;
             const { uploaded, errors } = result;
+            const total = uploaded + errors.length;
 
             if (errors.length > 0 && uploaded === 0) {
-                showMessage(`${actionName}失败: ${errors.join(', ')}`, 'error');
+                showMessage(`${actionName}失败: 共 ${total} 个文件，全部失败`, 'error');
             } else if (errors.length > 0) {
-                showMessage(`${actionName}成功: ${uploaded} 个文件，失败: ${errors.join(', ')}`, 'error');
+                showMessage(`${actionName}完成: 共 ${total} 个文件，成功 ${uploaded} 个，失败 ${errors.length} 个`, 'error');
                 loadFiles();
             } else {
-                showMessage(`${actionName}成功: ${uploaded} 个文件`);
+                showMessage(`${actionName}成功: 共 ${uploaded} 个文件`);
                 loadFiles();
             }
             setTimeout(() => uploadProgress.value = 0, 500);
@@ -272,6 +327,8 @@ createApp({
         const uploadFiles = async (fileList, onProgress) => {
             if (!fileList?.length) return { uploaded: 0, errors: [] };
 
+            console.log(`[上传] 开始上传 ${fileList.length} 个文件`);
+            
             isUploading.value = true;
             uploadStatus.value = `准备上传 ${fileList.length} 个文件...`;
 
@@ -280,10 +337,20 @@ createApp({
             let errorMessages = [];
 
             const totalBatches = Math.ceil(fileList.length / BATCH_SIZE);
+            console.log(`[上传] 分 ${totalBatches} 批, 每批 ${BATCH_SIZE} 个`);
+            
             for (let i = 0; i < fileList.length; i += BATCH_SIZE) {
                 const batch = fileList.slice(i, i + BATCH_SIZE);
                 const formData = new FormData();
                 const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
+                
+                console.log(`[上传] 批次 ${currentBatch}/${totalBatches}: ${batch.length} 个文件`);
+                // 打印前3个文件名用于调试
+                if (batch.length <= 5) {
+                    console.log('[上传]   文件:', batch.map(f => f.relativePath || f.name).join(', '));
+                } else {
+                    console.log('[上传]   文件:', batch.slice(0, 3).map(f => f.relativePath || f.name).join(', '), `... +${batch.length - 3} more`);
+                }
 
                 uploadStatus.value = `上传中 ${currentBatch}/${totalBatches}...`;
 
@@ -293,21 +360,38 @@ createApp({
                 }
 
                 try {
+                    console.log(`[上传] 发送批次 ${currentBatch}...`);
                     const res = await fetch(`/api/upload?path=${encodeURIComponent(currentPath.value)}`, {
                         method: 'POST',
                         body: formData
                     });
                     const data = await res.json();
-
-                    if (data.uploaded) uploadedCount += data.uploaded.length;
-                    if (data.errors) errorMessages.push(...data.errors);
+                    
+                    console.log(`[上传] 批次 ${currentBatch} 响应:`, {
+                        uploaded: data.uploaded?.length || 0,
+                        errors: data.errors?.length || 0,
+                        message: data.message
+                    });
+                    
+                    if (data.uploaded) {
+                        uploadedCount += data.uploaded.length;
+                        console.log(`[上传] 批次 ${currentBatch} 成功: ${data.uploaded.length} 个`);
+                    }
+                    if (data.errors) {
+                        errorMessages.push(...data.errors);
+                        console.warn(`[上传] 批次 ${currentBatch} 错误:`, data.errors);
+                    }
                     if (onProgress) onProgress(Math.min((uploadedCount / fileList.length) * 100, 100));
                 } catch (err) {
-                    const batchNames = batch.slice(0, 3).map(f => f.name).join(', ');
-                    const more = batch.length > 3 ? ` (+${batch.length - 3} more)` : '';
-                    errorMessages.push(`批次 ${Math.floor(i / BATCH_SIZE) + 1} (${batchNames}${more}): ${err.message}`);
+                    console.error(`[上传] 批次 ${currentBatch} 请求失败:`, err);
+                    // 整个批次失败（网络错误等），将该批次所有文件标记为失败
+                    for (const file of batch) {
+                        errorMessages.push(`${file.relativePath || file.name}: ${err.message}`);
+                    }
                 }
             }
+            
+            console.log(`[上传] 完成: 成功 ${uploadedCount}/${fileList.length}, 失败 ${errorMessages.length}`);
 
             isUploading.value = false;
             return { uploaded: uploadedCount, errors: errorMessages };
@@ -329,47 +413,164 @@ createApp({
             e.target.value = '';
         };
 
-        const traverseFileTree = async (item, path, result) => {
-            if (item.isFile) {
-                result.push(await new Promise(resolve => item.file(f => resolve((f.relativePath = path + f.name, f)))));
-            } else if (item.isDirectory) {
-                const reader = item.createReader();
-                const read = async () => {
-                    const entries = await new Promise(resolve => reader.readEntries(resolve));
-                    if (entries.length) {
-                        await Promise.all(entries.map(e => traverseFileTree(e, `${path}${item.name}/`, result)));
-                        await read();
+        // 优化：使用队列代替递归，避免栈溢出，并限制深度和文件数
+        // 返回 { files: [], errors: [], totalFound: number }
+        const traverseFileTree = async (item, path, globalCounter = { count: 0 }) => {
+            const MAX_DEPTH = 10;       // 限制目录深度
+            const MAX_FILES = 2000;     // 限制最大文件数
+            const files = [];
+            const errors = [];
+            let localCount = 0;
+            let dirReadCount = 0;
+            
+            // 队列存储待处理的项
+            const queue = [{ item, path, depth: 0 }];
+            // 使用 Map 跟踪每个目录的 reader，避免重复创建
+            const dirReaders = new Map();
+            
+            console.log(`[遍历] 开始: ${item.name || 'root'}, 初始队列长度: ${queue.length}`);
+            
+            while (queue.length > 0) {
+                // 检查全局计数器是否超过限制
+                if (globalCounter.count >= MAX_FILES) {
+                    console.warn(`[遍历] 已达到最大文件数限制 ${MAX_FILES}，停止遍历`);
+                    break;
+                }
+                
+                const { item: currentItem, path: currentPath, depth } = queue.shift();
+                
+                if (currentItem.isFile) {
+                    try {
+                        const file = await new Promise((resolve, reject) => {
+                            currentItem.file(
+                                f => resolve(Object.assign(f, { relativePath: currentPath + f.name })),
+                                err => reject(err)
+                            );
+                        });
+                        files.push(file);
+                        globalCounter.count++;
+                        localCount++;
+                        if (localCount % 50 === 0) {
+                            console.log(`[遍历] 已处理 ${localCount} 个文件, 队列: ${queue.length}`);
+                        }
+                    } catch (err) {
+                        const filePath = currentPath + (currentItem.name || 'unknown');
+                        errors.push({ path: filePath, error: err.message || '读取失败' });
+                        console.warn(`[遍历] 读取文件失败: ${filePath}`, err);
                     }
-                };
-                await read();
+                } else if (currentItem.isDirectory && depth < MAX_DEPTH) {
+                    dirReadCount++;
+                    try {
+                        // 获取或创建 reader（每个目录只创建一个 reader）
+                        let reader = dirReaders.get(currentItem);
+                        let isNewReader = false;
+                        if (!reader) {
+                            reader = currentItem.createReader();
+                            dirReaders.set(currentItem, reader);
+                            isNewReader = true;
+                        }
+                        
+                        const entries = await new Promise((resolve, reject) => {
+                            reader.readEntries(resolve, reject);
+                        });
+                        
+                        console.log(`[遍历] 目录读取 #${dirReadCount}: ${currentItem.name}, 新reader: ${isNewReader}, 条目数: ${entries.length}, 队列: ${queue.length}`);
+                        
+                        // 将子项加入队列（不使用递归）
+                        let fileCount = 0;
+                        let dirCount = 0;
+                        for (const entry of entries) {
+                            queue.push({
+                                item: entry,
+                                path: `${currentPath}${currentItem.name}/`,
+                                depth: depth + 1
+                            });
+                            if (entry.isFile) fileCount++;
+                            else if (entry.isDirectory) dirCount++;
+                        }
+                        console.log(`[遍历]   -> 添加 ${fileCount} 文件, ${dirCount} 目录到队列`);
+                        
+                        // 如果返回了 100 个条目，说明可能还有更多，将目录重新加入队列继续读取
+                        if (entries.length === 100) {
+                            queue.unshift({ 
+                                item: currentItem, 
+                                path: currentPath, 
+                                depth 
+                            });
+                            console.log(`[遍历]   -> 目录未读完, 重新加入队列 (当前共${queue.length}项)`);
+                        }
+                    } catch (err) {
+                        const dirPath = currentPath + (currentItem.name || 'unknown');
+                        errors.push({ path: dirPath, error: err.message || '读取目录失败' });
+                        console.warn(`[遍历] 读取目录失败: ${dirPath}`, err);
+                    }
+                }
+                
+                // 每处理50个文件让出主线程，避免阻塞UI
+                if (localCount % 50 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
             }
+            
+            console.log(`[遍历] 完成: ${item.name || 'root'}, 找到 ${files.length} 个文件, ${errors.length} 个错误, 目录读取次数: ${dirReadCount}`);
+            return { files, errors, totalFound: globalCounter.count };
         };
 
         const handleDrop = async (e) => {
             isDragging.value = false;
-            const result = [];
+            const files = [];
+            const readErrors = [];
             const items = e.dataTransfer.items;
+            
+            console.log('[拖拽] 开始处理, items数量:', items?.length);
 
             if (items?.length > 0 && typeof items[0].webkitGetAsEntry === 'function') {
                 const entries = [];
                 for (let i = 0; i < items.length; i++) {
                     const entry = items[i].webkitGetAsEntry();
                     if (entry) entries.push(entry);
+                    console.log(`[拖拽] item ${i}:`, entry?.name, entry?.isFile ? '文件' : '目录');
                 }
-                await Promise.all(entries.map(entry => traverseFileTree(entry, '', result)));
+                console.log('[拖拽] 有效entries:', entries.length);
+                
+                // 并行处理所有拖拽项
+                const results = await Promise.all(entries.map(entry => traverseFileTree(entry, '')));
+                for (const result of results) {
+                    files.push(...result.files);
+                    readErrors.push(...result.errors);
+                }
             } else {
+                console.log('[拖拽] 使用 fallback 模式');
                 for (const file of e.dataTransfer.files) {
                     file.relativePath = file.webkitRelativePath || file.name;
-                    result.push(file);
+                    files.push(file);
                 }
             }
+            
+            console.log(`[拖拽] 总计: ${files.length} 个文件, ${readErrors.length} 个读取错误`);
 
-            if (result.length > 0) {
+            if (readErrors.length > 0) {
+                console.warn('[拖拽] 读取失败的文件/目录:', readErrors);
+            }
+
+            if (files.length > 0 || readErrors.length > 0) {
                 uploadProgress.value = 0;
-                const uploadResult = await uploadFiles(result, (p) => uploadProgress.value = p);
-                handleUploadResult(uploadResult);
+                const uploadResult = await uploadFiles(files, (p) => uploadProgress.value = p);
+                // 合并读取错误和上传错误
+                const totalErrors = [
+                    ...readErrors.map(e => `${e.path}: ${e.error}`),
+                    ...uploadResult.errors
+                ];
+                console.log(`[拖拽] 上传完成: 成功 ${uploadResult.uploaded}, 失败 ${totalErrors.length}`);
+                handleUploadResult({ 
+                    uploaded: uploadResult.uploaded, 
+                    errors: totalErrors 
+                });
             }
         };
+
+        // 预创建 Collator 提高中文排序性能
+        const collator = new Intl.Collator('zh-CN', { sensitivity: 'base' });
 
         // 剪贴板处理 - 简化重复的上传逻辑
         const generateHash = async (data) => {
