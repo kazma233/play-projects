@@ -404,74 +404,21 @@ func (s *ImageService) fillImageURLs(image *model.Image) {
 func (s *ImageService) SyncFromStorage(ctx context.Context, triggeredBy string) (*SyncResult, error) {
 	slog.Info("开始从存储同步", "triggered_by", triggeredBy)
 
-	tx, err := s.db.Begin()
+	slog.Info("开始扫描存储文件")
+	storageFiles, err := s.storage.ListFiles(ctx, s.pathPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("开始事务失败: %w", err)
-	}
-	defer tx.Rollback()
-
-	imageRepo := repository.NewImageRepository(tx)
-	syncLogRepo := repository.NewSyncLogRepository(tx)
-
-	now := time.Now()
-	logID, err := syncLogRepo.CreateSyncLog(triggeredBy, now)
-	if err != nil {
-		return nil, fmt.Errorf("创建同步日志失败: %w", err)
-	}
-	slog.Info("创建同步日志", "log_id", logID)
-
-	var storageFiles []*storage.RepositoryFile
-	var dbImages []*model.Image
-
-	result := &SyncResult{
-		LogID: logID,
-	}
-
-	syncTag, err := imageRepo.GetOrCreateSyncTag()
-	if err != nil {
-		errMsg := "获取或创建同步标签失败"
-		slog.Error(errMsg, "error", err)
-		_ = syncLogRepo.UpdateSyncLog(logID, &now, 0, 0, 1, &errMsg, "failed")
-		return nil, fmt.Errorf("%s: %w", errMsg, err)
-	}
-	slog.Info("同步标签", "tag_id", syncTag.ID, "tag_name", syncTag.Name)
-
-	slog.Info("开始扫描 GitHub 仓库文件")
-	storageFiles, err = s.storage.ListFiles(ctx, s.pathPrefix)
-	if err != nil {
-		errMsg := fmt.Sprintf("扫描仓库文件失败: %v", err)
-		slog.Error(errMsg)
-		_ = syncLogRepo.UpdateSyncLog(logID, &now, 0, 0, 1, &errMsg, "failed")
-		return nil, fmt.Errorf("%s", errMsg)
+		return nil, fmt.Errorf("扫描仓库文件失败: %w", err)
 	}
 	slog.Info("扫描完成", "total_files", len(storageFiles))
 
-	slog.Info("查询数据库所有图片")
-	dbImages, err = imageRepo.GetAllImagesNotDeleted()
-	if err != nil {
-		errMsg := fmt.Sprintf("查询数据库图片失败: %v", err)
-		slog.Error(errMsg)
-		_ = syncLogRepo.UpdateSyncLog(logID, &now, 0, 0, 1, &errMsg, "failed")
-		return nil, fmt.Errorf("%s", errMsg)
-	}
-	slog.Info("数据库图片", "total", len(dbImages))
-
-	dbImageMap := make(map[string]*model.Image)
-	for _, img := range dbImages {
-		dbImageMap[img.Path] = img
-	}
-
-	storageFileMap := make(map[string]*storage.RepositoryFile)
-	for _, file := range storageFiles {
-		storageFileMap[file.Path] = file
-	}
-
+	storageFileMap := make(map[string]*storage.RepositoryFile, len(storageFiles))
 	imageExtensions := map[string]bool{
 		".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true,
 	}
-
-	var originalFiles []*storage.RepositoryFile
+	originalFiles := make([]*storage.RepositoryFile, 0, len(storageFiles))
 	for _, file := range storageFiles {
+		storageFileMap[file.Path] = file
+
 		if file.Type != "file" {
 			continue
 		}
@@ -491,6 +438,50 @@ func (s *ImageService) SyncFromStorage(ctx context.Context, triggeredBy string) 
 	}
 
 	slog.Info("找到的原图文件", "count", len(originalFiles))
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("开始事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	imageRepo := repository.NewImageRepository(tx)
+	syncLogRepo := repository.NewSyncLogRepository(tx)
+
+	now := time.Now()
+	logID, err := syncLogRepo.CreateSyncLog(triggeredBy, now)
+	if err != nil {
+		return nil, fmt.Errorf("创建同步日志失败: %w", err)
+	}
+	slog.Info("创建同步日志", "log_id", logID)
+
+	result := &SyncResult{
+		LogID: logID,
+	}
+
+	syncTag, err := imageRepo.GetOrCreateSyncTag()
+	if err != nil {
+		errMsg := "获取或创建同步标签失败"
+		slog.Error(errMsg, "error", err)
+		_ = syncLogRepo.UpdateSyncLog(logID, &now, 0, 0, 1, &errMsg, "failed")
+		return nil, fmt.Errorf("%s: %w", errMsg, err)
+	}
+	slog.Info("同步标签", "tag_id", syncTag.ID, "tag_name", syncTag.Name)
+
+	slog.Info("查询数据库所有图片")
+	dbImages, err := imageRepo.GetAllImagesNotDeleted()
+	if err != nil {
+		errMsg := fmt.Sprintf("查询数据库图片失败: %v", err)
+		slog.Error(errMsg)
+		_ = syncLogRepo.UpdateSyncLog(logID, &now, 0, 0, 1, &errMsg, "failed")
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+	slog.Info("数据库图片", "total", len(dbImages))
+
+	dbImageMap := make(map[string]*model.Image)
+	for _, img := range dbImages {
+		dbImageMap[img.Path] = img
+	}
 	totalFiles := len(originalFiles)
 	processedFiles := 0
 	errorCount := 0
@@ -551,7 +542,6 @@ func (s *ImageService) SyncFromStorage(ctx context.Context, triggeredBy string) 
 			slog.Info("SHA一致，跳过", "path", storageFile.Path)
 			_ = syncLogRepo.CreateSyncFileLog(logID, storageFile.Path, "skipped", "success", &storageFile.SHA, &storageFile.SHA, &storageFile.Size, &storageFile.Size, nil)
 			result.SkippedCount++
-			s.updateDerivedImageMeta(ctx, dbImage.ID, storageFile.Path, storageFileMap, imageRepo, syncLogRepo, logID, &errorCount)
 		}
 	}
 
@@ -666,10 +656,8 @@ func (s *ImageService) updateDerivedImageMeta(
 
 func (s *ImageService) createImageFromStorage(ctx context.Context, tx *sql.Tx, storageFile *storage.RepositoryFile, syncTagID int64, imageRepo repository.ImageRepositoryInterface) (*model.Image, error) {
 	mimeType := "image/jpeg"
-	if idx := strings.LastIndex(storageFile.Path, "."); idx > 0 {
-		ext := strings.ToLower(storageFile.Path[idx:])
+	if strings.LastIndex(storageFile.Path, ".") > 0 {
 		mimeType = imageutil.GetMimeType(storageFile.Path)
-		_ = ext
 	}
 
 	width, height := 0, 0

@@ -11,11 +11,3 @@
 body {
     @apply antialiased;
 }
-
-.gallery-grid {
-    @apply w-full;
-}
-
-.item {
-    @apply break-inside-avoid;
-}

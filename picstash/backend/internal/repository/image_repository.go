@@ -365,7 +365,7 @@ func (r *imageRepository) FindByPath(path string) (*model.Image, error) {
 }
 
 func (r *imageRepository) UpdateImageMeta(id int64, sha string, size *int64, width *int, height *int) error {
-	_, err := r.tx.Exec(`UPDATE images SET sha = ?, size = ?, width = ?, height = ?, updated_at = NOW() WHERE id = ?`, sha, size, width, height, id)
+	_, err := r.tx.Exec(`UPDATE images SET sha = ?, size = ?, width = ?, height = ? WHERE id = ?`, sha, size, width, height, id)
 	if err != nil {
 		return fmt.Errorf("更新图片元数据失败: %w", err)
 	}

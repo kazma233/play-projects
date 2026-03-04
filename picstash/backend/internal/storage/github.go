@@ -68,21 +68,6 @@ func (s *githubStorage) Upload(ctx context.Context, file *File) (*UploadResult, 
 	return nil, fmt.Errorf("上传文件到GitHub失败: %w", lastErr)
 }
 
-func (s *githubStorage) BatchUpload(ctx context.Context, files []*File) ([]*UploadResult, error) {
-	results := make([]*UploadResult, 0, len(files))
-
-	for _, file := range files {
-		result, err := s.Upload(ctx, file)
-		if err != nil {
-			slog.Error("批量上传失败", "path", file.Path, "error", err)
-			return results, err
-		}
-		results = append(results, result)
-	}
-
-	return results, nil
-}
-
 func (s *githubStorage) Delete(ctx context.Context, path, sha string) error {
 	if sha == "" {
 		return fmt.Errorf("文件SHA不能为空")
@@ -130,17 +115,6 @@ func (s *githubStorage) GetURL(ctx context.Context, path string) string {
 // 返回GitHub原始文件地址: https://raw.githubusercontent.com/owner/repo/branch/path
 func (s *githubStorage) GetPublicURL(path string) string {
 	return s.baseURL + path
-}
-
-func (s *githubStorage) Exists(ctx context.Context, path string) (bool, error) {
-	_, _, resp, err := s.client.Repositories.GetContents(ctx, s.repoOwner, s.repoName, path, nil)
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
 }
 
 func (s *githubStorage) ListFiles(ctx context.Context, path string) ([]*RepositoryFile, error) {

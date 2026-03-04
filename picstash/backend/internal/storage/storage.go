@@ -13,7 +13,7 @@ type File struct {
 type UploadResult struct {
 	Path string // 文件路径
 	URL  string // 访问URL
-	SHA  string // 文件哈希（GitHub为文件SHA，本地存储为简化校验和）
+	SHA  string // 文件哈希（GitHub/本地均为 SHA-256）
 }
 
 // RepositoryFile 表示仓库中的文件信息
@@ -28,13 +28,9 @@ type RepositoryFile struct {
 
 type Storage interface {
 	Upload(ctx context.Context, file *File) (*UploadResult, error)
-	BatchUpload(ctx context.Context, files []*File) ([]*UploadResult, error)
 	Delete(ctx context.Context, path, sha string) error
 	GetURL(ctx context.Context, path string) string
-	Exists(ctx context.Context, path string) (bool, error)
 	ListFiles(ctx context.Context, path string) ([]*RepositoryFile, error)
 	GetRawFileContent(ctx context.Context, path string) ([]byte, error)
-	// GetPublicURL 获取前端访问的完整URL
-	// GitHub存储返回GitHub原始地址，本地存储返回本地服务地址
 	GetPublicURL(path string) string
 }

@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime/multipart"
 	"strconv"
@@ -178,15 +179,18 @@ func readFilesToMap(files []*multipart.FileHeader) (map[string][]byte, error) {
 			return nil, fmt.Errorf("打开文件失败 %s: %w", f.Filename, err)
 		}
 
-		data := make([]byte, f.Size)
-		n, err := file.Read(data)
-		file.Close()
+		limitedReader := io.LimitReader(file, maxFileSize+1)
+		data, readErr := io.ReadAll(limitedReader)
+		closeErr := file.Close()
 
-		if err != nil {
-			return nil, fmt.Errorf("读取文件失败 %s: %w", f.Filename, err)
+		if readErr != nil {
+			return nil, fmt.Errorf("读取文件失败 %s: %w", f.Filename, readErr)
 		}
-		if int64(n) != f.Size {
-			return nil, fmt.Errorf("文件读取不完整 %s: 期望 %d, 实际 %d", f.Filename, f.Size, n)
+		if closeErr != nil {
+			return nil, fmt.Errorf("关闭文件失败 %s: %w", f.Filename, closeErr)
+		}
+		if int64(len(data)) > maxFileSize {
+			return nil, fmt.Errorf("文件过大: %s (%d bytes, 最大50MB)", f.Filename, len(data))
 		}
 
 		result[f.Filename] = data

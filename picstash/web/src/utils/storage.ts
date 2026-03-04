@@ -23,11 +23,3 @@ export function loadWatermarkConfig(): WatermarkConfig {
   }
   return { ...defaultWatermarkConfig };
 }
-
-export function clearWatermarkConfig(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch (e) {
-    console.error("Failed to clear watermark config:", e);
-  }
-}

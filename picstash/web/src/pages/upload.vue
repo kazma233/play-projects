@@ -336,7 +336,6 @@ const showWatermarkSettings = ref(false)
 const watermarkConfig = ref<WatermarkConfig>({ ...defaultWatermarkConfig })
 const mainPreviewCanvas = ref<HTMLCanvasElement | null>(null)
 const selectedIndex = ref(0)
-const thumbnailBlobs = ref<(Blob | null)[]>([])
 
 const getPreviewUrl = (file: File): string => {
   const url = URL.createObjectURL(file)
@@ -424,7 +423,6 @@ const removeFile = (index: number) => {
     if (urlIndex > -1) objectUrls.splice(urlIndex, 1)
   }
   files.value.splice(index, 1)
-  thumbnailBlobs.value.splice(index, 1)
 
   if (selectedIndex.value >= files.value.length) {
     selectedIndex.value = Math.max(0, files.value.length - 1)

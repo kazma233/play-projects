@@ -100,7 +100,6 @@ const authStore = useAuthStore()
 const deleting = ref(false)
 const allTags = ref<Tag[]>([])
 const selectedTagIds = ref<string[]>([])
-const savingTags = ref(false)
 let previousImageId: number | null = null
 
 const formatSize = (bytes?: number) => {
@@ -140,7 +139,6 @@ const toggleTag = async (tagId: number) => {
 }
 
 const handleSaveTags = async (tagIds: string[]) => {
-  savingTags.value = true
   const numericIds = tagIds.map(id => parseInt(id))
   try {
     await imagesApi.updateTags(props.image.id, numericIds)
@@ -148,8 +146,6 @@ const handleSaveTags = async (tagIds: string[]) => {
     console.error('更新标签失败:', error)
     updateSelectedTags()
     alert('更新标签失败')
-  } finally {
-    savingTags.value = false
   }
 }
 

@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -45,7 +47,7 @@ func (s *localStorage) Upload(ctx context.Context, file *File) (*UploadResult, e
 		return nil, fmt.Errorf("写入文件失败: %w", err)
 	}
 
-	// 计算文件SHA（使用文件内容计算简单的校验和）
+	// 计算文件SHA（SHA-256）
 	sha := computeSHA(file.Content)
 
 	url := s.buildURL(file.Path)
@@ -57,23 +59,6 @@ func (s *localStorage) Upload(ctx context.Context, file *File) (*UploadResult, e
 		URL:  url,
 		SHA:  sha,
 	}, nil
-}
-
-// BatchUpload 批量上传文件
-func (s *localStorage) BatchUpload(ctx context.Context, files []*File) ([]*UploadResult, error) {
-	results := make([]*UploadResult, 0, len(files))
-
-	for _, file := range files {
-		result, err := s.Upload(ctx, file)
-		if err != nil {
-			slog.Error("批量上传失败", "path", file.Path, "error", err)
-			return results, err
-		}
-		results = append(results, result)
-	}
-
-	slog.Info("批量上传完成", "count", len(results))
-	return results, nil
 }
 
 // Delete 删除本地文件
@@ -104,19 +89,6 @@ func (s *localStorage) GetURL(ctx context.Context, path string) string {
 	return s.buildURL(path)
 }
 
-// Exists 检查文件是否存在
-func (s *localStorage) Exists(ctx context.Context, path string) (bool, error) {
-	fullPath := filepath.Join(s.basePath, path)
-	_, err := os.Stat(fullPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("检查文件存在性失败: %w", err)
-	}
-	return true, nil
-}
-
 // ListFiles 递归列出目录下的所有文件
 func (s *localStorage) ListFiles(ctx context.Context, path string) ([]*RepositoryFile, error) {
 	var files []*RepositoryFile
@@ -144,6 +116,12 @@ func (s *localStorage) ListFiles(ctx context.Context, path string) ([]*Repositor
 			return nil
 		}
 
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// 跳过目录
 		if info.IsDir() {
 			return nil
@@ -159,9 +137,14 @@ func (s *localStorage) ListFiles(ctx context.Context, path string) ([]*Repositor
 		// 统一使用正斜杠
 		relPath = filepath.ToSlash(relPath)
 
+		fileSHA, err := computeFileSHA(filePath)
+		if err != nil {
+			return fmt.Errorf("计算文件SHA失败: %w", err)
+		}
+
 		files = append(files, &RepositoryFile{
 			Path:        relPath,
-			SHA:         "", // 本地存储不维护SHA
+			SHA:         fileSHA,
 			Size:        info.Size(),
 			Type:        "file",
 			DownloadURL: s.buildURL(relPath),
@@ -190,16 +173,6 @@ func (s *localStorage) GetRawFileContent(ctx context.Context, path string) ([]by
 	}
 
 	return data, nil
-}
-
-// GetBasePath 返回存储的根目录路径
-func (s *localStorage) GetBasePath() string {
-	return s.basePath
-}
-
-// GetURLPath 返回对外访问URL路径前缀
-func (s *localStorage) GetURLPath() string {
-	return s.urlPath
 }
 
 // buildURL 构建文件的访问URL（相对路径，用于数据库存储）
@@ -238,82 +211,23 @@ func (s *localStorage) cleanupEmptyDirs(dir string) {
 	}
 }
 
-// computeSHA 计算内容的简单校验和（实际SHA256）
-// 注意：这里使用一个简化版本，实际生产环境应该使用 crypto/sha256
+// computeSHA 计算内容的 SHA-256
 func computeSHA(content []byte) string {
-	// 返回前16个字符的十六进制表示作为简化SHA
-	// 实际项目中应该导入 "crypto/sha256" 并计算真正的哈希
-	if len(content) == 0 {
-		return ""
-	}
-
-	// 简单的校验和计算
-	sum := 0
-	for _, b := range content {
-		sum += int(b)
-	}
-
-	return fmt.Sprintf("%x", sum%65536)
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
 }
 
-// CopyFile 本地存储特有的辅助方法：复制文件
-func (s *localStorage) CopyFile(ctx context.Context, srcPath, dstPath string) error {
-	srcFullPath := filepath.Join(s.basePath, srcPath)
-	dstFullPath := filepath.Join(s.basePath, dstPath)
-
-	// 确保目标目录存在
-	dir := filepath.Dir(dstFullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("创建目标目录失败: %w", err)
-	}
-
-	// 打开源文件
-	srcFile, err := os.Open(srcFullPath)
+func computeFileSHA(filePath string) (string, error) {
+	file, err := os.Open(filePath)
 	if err != nil {
-		return fmt.Errorf("打开源文件失败: %w", err)
+		return "", err
 	}
-	defer srcFile.Close()
+	defer file.Close()
 
-	// 创建目标文件
-	dstFile, err := os.Create(dstFullPath)
-	if err != nil {
-		return fmt.Errorf("创建目标文件失败: %w", err)
-	}
-	defer dstFile.Close()
-
-	// 复制内容
-	_, err = io.Copy(dstFile, srcFile)
-	if err != nil {
-		return fmt.Errorf("复制文件内容失败: %w", err)
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", err
 	}
 
-	return nil
-}
-
-// MoveFile 本地存储特有的辅助方法：移动文件
-func (s *localStorage) MoveFile(ctx context.Context, srcPath, dstPath string) error {
-	srcFullPath := filepath.Join(s.basePath, srcPath)
-	dstFullPath := filepath.Join(s.basePath, dstPath)
-
-	// 确保目标目录存在
-	dir := filepath.Dir(dstFullPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("创建目标目录失败: %w", err)
-	}
-
-	// 移动文件
-	if err := os.Rename(srcFullPath, dstFullPath); err != nil {
-		// 如果跨设备移动失败，尝试复制后删除
-		if err := s.CopyFile(ctx, srcPath, dstPath); err != nil {
-			return fmt.Errorf("移动文件失败: %w", err)
-		}
-		if err := s.Delete(ctx, srcPath, ""); err != nil {
-			slog.Warn("移动后删除源文件失败", "path", srcPath, "error", err)
-		}
-	}
-
-	// 清理源目录可能产生的空目录
-	s.cleanupEmptyDirs(filepath.Dir(srcFullPath))
-
-	return nil
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }

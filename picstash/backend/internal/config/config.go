@@ -14,7 +14,6 @@ type Config struct {
 	JWT      JWTConfig     `mapstructure:"jwt"`
 	SMTP     SMTPConfig    `mapstructure:"smtp"`
 	Storage  StorageConfig `mapstructure:"storage"`
-	Upload   UploadConfig  `mapstructure:"upload"`
 	Log      LogConfig     `mapstructure:"log"`
 	Auth     AuthConfig    `mapstructure:"auth"`
 }
@@ -62,9 +61,6 @@ type LocalConfig struct {
 	BasePath   string `mapstructure:"base_path"`   // 文件存储根目录
 	URLPath    string `mapstructure:"url_path"`    // URL路径前缀（如 /files）
 	ServerAddr string `mapstructure:"server_addr"` // 后端服务地址（如 http://localhost:6100）
-}
-
-type UploadConfig struct {
 }
 
 type LogConfig struct {
