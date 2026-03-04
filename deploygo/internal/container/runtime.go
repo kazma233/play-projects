@@ -2,7 +2,6 @@ package container
 
 import (
 	"context"
-	"io"
 )
 
 type ContainerConfig struct {
@@ -30,8 +29,6 @@ type ContainerRuntime interface {
 	CopyToContainer(ctx context.Context, containerID, srcPath, dstPath string) error
 
 	CopyFromContainer(ctx context.Context, containerID, srcPath, dstPath string) error
-
-	GetContainerLogs(ctx context.Context, id string) (io.ReadCloser, error)
 
 	Close() error
 }

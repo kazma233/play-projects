@@ -118,12 +118,10 @@ func (s *SSHExecutor) Close() {
 	}
 }
 
-func (s *SSHExecutor) Execute(command string) ([]byte, error) {
-	var output []byte
-
+func (s *SSHExecutor) Execute(command string) error {
 	if s.client == nil {
 		if err := s.Connect(); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
@@ -137,19 +135,21 @@ func (s *SSHExecutor) Execute(command string) ([]byte, error) {
 			s.client.Close()
 			s.client = nil
 		}
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return fmt.Errorf("failed to create session: %w", err)
 	}
 	defer session.Close()
 
-	output, err = session.CombinedOutput(command)
-	if err != nil {
-		return nil, fmt.Errorf("ssh command failed: %w, output: %s", err, string(output))
+	session.Stdout = os.Stdout
+	session.Stderr = os.Stderr
+
+	if err := session.Run(command); err != nil {
+		return fmt.Errorf("ssh command failed: %w", err)
 	}
 
-	return output, nil
+	return nil
 }
 
-func (s *SSHExecutor) ExecuteBatch(commands []string) ([]byte, error) {
+func (s *SSHExecutor) ExecuteBatch(commands []string) error {
 	script := strings.Join(commands, " && ")
 	return s.Execute(script)
 }

@@ -6,7 +6,6 @@ import (
 	"deploygo/internal/container"
 	"deploygo/internal/fileutil"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path"
@@ -80,12 +79,6 @@ func RunBuilds(runtime container.ContainerRuntime, cfg *config.Config, builds []
 		log.Printf("Executing: %s", strings.Join(build.Commands, " && "))
 		cmd := fmt.Sprintf("cd %s && %s && exit", build.WorkingDir, strings.Join(build.Commands, " && "))
 		if err := runtime.Exec(ctx, containerID, "sh", "-c", cmd); err != nil {
-			logs, _ := runtime.GetContainerLogs(ctx, containerID)
-			if logs != nil {
-				data, _ := io.ReadAll(logs)
-				logs.Close()
-				log.Printf("Container logs:\n%s", string(data))
-			}
 			return fmt.Errorf("command failed: %w", err)
 		}
 
@@ -113,15 +106,6 @@ func RunBuilds(runtime container.ContainerRuntime, cfg *config.Config, builds []
 				return fmt.Errorf("failed to copy from container: %w", err)
 			}
 		}
-
-		logs, err := runtime.GetContainerLogs(ctx, containerID)
-		if err != nil {
-			return fmt.Errorf("failed to get logs: %w", err)
-		}
-		defer logs.Close()
-
-		logData, _ := io.ReadAll(logs)
-		log.Printf("Output: %s", string(logData))
 	}
 
 	return nil

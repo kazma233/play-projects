@@ -47,11 +47,9 @@ func runSSHStep(server *config.ServerConfig, step *config.DeploymentStep) error 
 
 	for _, command := range step.Commands {
 		log.Printf("Executing: %s", command)
-		output, err := executor.Execute(command)
-		if err != nil {
-			return fmt.Errorf("command failed: %w, output: %s", err, string(output))
+		if err := executor.Execute(command); err != nil {
+			return fmt.Errorf("command failed: %w", err)
 		}
-		log.Printf("Output: %s", string(output))
 	}
 
 	return nil

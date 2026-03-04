@@ -3,7 +3,6 @@ package container
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -90,8 +89,13 @@ func (p *PodmanRuntime) StartContainer(ctx context.Context, id string) error {
 func (p *PodmanRuntime) Exec(ctx context.Context, containerID string, cmd ...string) error {
 	args := []string{"exec", containerID}
 	args = append(args, cmd...)
-	_, err := p.runCommand(ctx, args...)
-	return err
+
+	log.Printf("Executing: podman %s", strings.Join(args, " "))
+	execCmd := exec.CommandContext(ctx, p.command, args...)
+	execCmd.Stdout = os.Stdout
+	execCmd.Stderr = os.Stderr
+
+	return execCmd.Run()
 }
 
 func (p *PodmanRuntime) WaitContainer(ctx context.Context, id string) error {
@@ -113,26 +117,6 @@ func (p *PodmanRuntime) CopyFromContainer(ctx context.Context, containerID, srcP
 	os.MkdirAll(dstPath, 0755)
 	_, err := p.runCommand(ctx, "cp", fmt.Sprintf("%s:%s", containerID, srcPath), dstPath)
 	return err
-}
-
-func (p *PodmanRuntime) GetContainerLogs(ctx context.Context, id string) (io.ReadCloser, error) {
-	output, err := os.CreateTemp("", "deploygo-podman-logs-*")
-	if err != nil {
-		return nil, err
-	}
-
-	args := []string{"logs", id}
-	cmd := exec.CommandContext(ctx, p.command, args...)
-	cmd.Stdout = output
-	cmd.Stderr = output
-
-	if err := cmd.Run(); err != nil {
-		output.Close()
-		return nil, err
-	}
-
-	output.Seek(0, 0)
-	return output, nil
 }
 
 func (p *PodmanRuntime) Close() error {

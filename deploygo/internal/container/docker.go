@@ -3,7 +3,6 @@ package container
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -90,8 +89,13 @@ func (d *DockerRuntime) StartContainer(ctx context.Context, id string) error {
 func (d *DockerRuntime) Exec(ctx context.Context, containerID string, cmd ...string) error {
 	args := []string{"exec", containerID}
 	args = append(args, cmd...)
-	_, err := d.runCommand(ctx, args...)
-	return err
+
+	log.Printf("Executing: docker %s", strings.Join(args, " "))
+	execCmd := exec.CommandContext(ctx, d.command, args...)
+	execCmd.Stdout = os.Stdout
+	execCmd.Stderr = os.Stderr
+
+	return execCmd.Run()
 }
 
 func (d *DockerRuntime) WaitContainer(ctx context.Context, id string) error {
@@ -113,26 +117,6 @@ func (d *DockerRuntime) CopyFromContainer(ctx context.Context, containerID, srcP
 	os.MkdirAll(dstPath, 0755)
 	_, err := d.runCommand(ctx, "cp", fmt.Sprintf("%s:%s", containerID, srcPath), dstPath)
 	return err
-}
-
-func (d *DockerRuntime) GetContainerLogs(ctx context.Context, id string) (io.ReadCloser, error) {
-	output, err := os.CreateTemp("", "deploygo-docker-logs-*")
-	if err != nil {
-		return nil, err
-	}
-
-	args := []string{"logs", id}
-	cmd := exec.CommandContext(ctx, d.command, args...)
-	cmd.Stdout = output
-	cmd.Stderr = output
-
-	if err := cmd.Run(); err != nil {
-		output.Close()
-		return nil, err
-	}
-
-	output.Seek(0, 0)
-	return output, nil
 }
 
 func (d *DockerRuntime) Close() error {
