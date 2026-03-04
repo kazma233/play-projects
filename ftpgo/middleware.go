@@ -4,7 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"log"
-	"time"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
@@ -13,7 +13,7 @@ import (
 )
 
 // SetupMiddleware 设置中间件
-func SetupMiddleware(app *fiber.App) {
+func SetupMiddleware(app *fiber.App, config *Config) {
 	// 恢复中间件 - 捕获panic
 	app.Use(recover.New())
 
@@ -22,9 +22,25 @@ func SetupMiddleware(app *fiber.App) {
 		Format: "[${time}] ${status} - ${method} ${path} ${latency}\n",
 	}))
 
+	if strings.TrimSpace(config.CORSOrigins) == "" {
+		return
+	}
+
+	allowedOrigins := make([]string, 0)
+	for origin := range strings.SplitSeq(config.CORSOrigins, ",") {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowedOrigins = append(allowedOrigins, origin)
+		}
+	}
+
+	if len(allowedOrigins) == 0 {
+		return
+	}
+
 	// CORS中间件
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: []string{"*"},
+		AllowOrigins: allowedOrigins,
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{"*"},
 	}))
@@ -98,22 +114,4 @@ func BasicAuthMiddleware(config *Config) fiber.Handler {
 // parseBase64 简单的 Base64 解码
 func parseBase64(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
-}
-
-// RequestLogger 请求日志
-func RequestLogger() fiber.Handler {
-	return func(c fiber.Ctx) error {
-		start := time.Now()
-
-		err := c.Next()
-
-		latency := time.Since(start)
-		log.Printf("[%s] %s - %v",
-			c.Method(),
-			c.Path(),
-			latency,
-		)
-
-		return err
-	}
 }

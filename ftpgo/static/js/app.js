@@ -121,6 +121,17 @@ createApp({
             showLoading('加载文件列表...');
             try {
                 const res = await fetch(`/api/browse?path=${encodeURIComponent(currentPath.value)}`);
+                if (!res.ok) {
+                    let errorMessage = '加载文件失败';
+                    try {
+                        const errorData = await res.json();
+                        if (errorData?.error) {
+                            errorMessage = errorData.error;
+                        }
+                    } catch (_e) {
+                    }
+                    throw new Error(errorMessage);
+                }
                 const data = await res.json();
                 files.value = data.files || [];
                 selectedFiles.value = [];

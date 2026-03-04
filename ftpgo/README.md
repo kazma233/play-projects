@@ -22,6 +22,10 @@
 # 克隆项目后进入目录
 cd ftpgo
 
+# 可选：在 .env 中配置鉴权
+# FTPGO_AUTH_USER=admin
+# FTPGO_AUTH_PASS=your_secure_password
+
 # 启动服务
 docker-compose up -d
 
@@ -53,7 +57,7 @@ go mod tidy
 go run .
 
 # 或使用环境变量
-go run . --root ./data --port 8080
+FTPGO_ROOT=./data FTPGO_PORT=8080 go run .
 ```
 
 ### 构建二进制文件
@@ -75,6 +79,7 @@ go build -o ftpgo .
 | `FTPGO_ROOT` | 文件存储根目录 | `./data` |
 | `FTPGO_PORT` | 服务端口 | `7300` |
 | `FTPGO_MAX_SIZE` | 最大文件大小（字节） | `1073741824` (1GB) |
+| `FTPGO_CORS_ORIGINS` | 允许跨域来源（逗号分隔） | (空，默认同源) |
 | `FTPGO_AUTH_USER` | Basic Auth 用户名 | (空，不启用鉴权) |
 | `FTPGO_AUTH_PASS` | Basic Auth 密码 | (空，不启用鉴权) |
 
@@ -95,6 +100,7 @@ export FTPGO_AUTH_PASS=your_secure_password
 export FTPGO_ROOT=/var/files
 export FTPGO_PORT=3000
 export FTPGO_MAX_SIZE=2147483648  # 2GB
+export FTPGO_CORS_ORIGINS=https://files.example.com
 export FTPGO_AUTH_USER=admin
 export FTPGO_AUTH_PASS=admin123
 ./ftpgo

@@ -27,11 +27,6 @@ func NewHandlers(fs *FileSystem, config *Config) *Handlers {
 	return &Handlers{fs: fs, config: config}
 }
 
-// BrowseRequest 浏览请求
-type BrowseRequest struct {
-	Path string `query:"path"`
-}
-
 // BrowseResponse 浏览响应
 type BrowseResponse struct {
 	Path  string     `json:"path"`
@@ -131,65 +126,82 @@ func (h *Handlers) Upload(c fiber.Ctx) error {
 		filename string
 		err      error
 	}
+	type uploadJob struct {
+		idx  int
+		file *multipart.FileHeader
+	}
 
-	// 控制并发数（最多同时处理5个文件）
+	// 固定 worker 池，避免每个文件都创建 goroutine
 	const maxWorkers = 5
-	semaphore := make(chan struct{}, maxWorkers)
+	workerCount := maxWorkers
+	if len(files) < workerCount {
+		workerCount = len(files)
+	}
+
+	jobs := make(chan uploadJob, len(files))
 	results := make(chan uploadResult, len(files))
 	var wg sync.WaitGroup
 
-	for i, file := range files {
+	for workerIdx := 0; workerIdx < workerCount; workerIdx++ {
 		wg.Add(1)
-		go func(idx int, f *multipart.FileHeader) {
+		go func() {
 			defer wg.Done()
 
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
+			for job := range jobs {
+				idx := job.idx
+				f := job.file
 
-			// 获取相对路径
-			relativePath := f.Filename
-			if idx < len(relativePaths) && relativePaths[idx] != "" {
-				relativePath = relativePaths[idx]
-			}
-
-			// 检查文件大小
-			if f.Size > h.config.MaxFileSize {
-				results <- uploadResult{
-					filename: f.Filename,
-					err:      fmt.Errorf("file too large"),
+				// 获取相对路径
+				relativePath := f.Filename
+				if idx < len(relativePaths) && relativePaths[idx] != "" {
+					relativePath = relativePaths[idx]
 				}
-				return
-			}
 
-			// 打开上传的文件
-			src, err := f.Open()
-			if err != nil {
-				results <- uploadResult{
-					filename: f.Filename,
-					err:      err,
+				// 检查文件大小
+				if f.Size > h.config.MaxFileSize {
+					results <- uploadResult{
+						filename: f.Filename,
+						err:      fmt.Errorf("file too large"),
+					}
+					continue
 				}
-				return
-			}
-			defer src.Close()
 
-			// 保存文件
-			normalizedPath := filepath.FromSlash(relativePath)
-			filePath := filepath.Join(path, normalizedPath)
-
-			if err := h.fs.SaveFile(filePath, src); err != nil {
-				results <- uploadResult{
-					filename: f.Filename,
-					err:      err,
+				// 打开上传的文件
+				src, err := f.Open()
+				if err != nil {
+					results <- uploadResult{
+						filename: f.Filename,
+						err:      err,
+					}
+					continue
 				}
-				return
-			}
 
-			results <- uploadResult{
-				filename: relativePath,
-				err:      nil,
+				// 保存文件
+				normalizedPath := filepath.FromSlash(relativePath)
+				filePath := filepath.Join(path, normalizedPath)
+
+				err = h.fs.SaveFile(filePath, src)
+				src.Close()
+				if err != nil {
+					results <- uploadResult{
+						filename: f.Filename,
+						err:      err,
+					}
+					continue
+				}
+
+				results <- uploadResult{
+					filename: relativePath,
+					err:      nil,
+				}
 			}
-		}(i, file)
+		}()
 	}
+
+	for i, file := range files {
+		jobs <- uploadJob{idx: i, file: file}
+	}
+	close(jobs)
 
 	// 等待所有上传完成
 	go func() {
@@ -316,15 +328,8 @@ func (h *Handlers) Download(c fiber.Ctx) error {
 		path = "/" + path
 	}
 
-	// 安全检查路径（避免目录遍历）
-	cleanPath := strings.TrimPrefix(path, "/")
-	cleanPath = filepath.Clean(cleanPath)
-	fullPath := filepath.Join(h.config.RootPath, cleanPath)
-
-	// 确保路径在根目录内
-	cleanFullPath := filepath.Clean(fullPath)
-	cleanRoot := filepath.Clean(h.config.RootPath)
-	if !strings.HasPrefix(cleanFullPath, cleanRoot) {
+	fullPath, err := h.fs.normalizePath(path)
+	if err != nil {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{
 			"error": "invalid path",
 		})
@@ -365,7 +370,7 @@ func (h *Handlers) Download(c fiber.Ctx) error {
 	}
 
 	// 设置缓存头
-	c.Set("Cache-Control", "public, max-age=3600")
+	c.Set("Cache-Control", "private, no-store")
 
 	return c.SendFile(fullPath)
 }
@@ -397,58 +402,95 @@ func getMimeType(ext string) string {
 
 // serveRange 处理 Range 请求
 func (h *Handlers) serveRange(filePath, rangeHeader string, fileSize int64, c fiber.Ctx) error {
-	// 解析 Range: bytes=start-end
-	parts := strings.Split(strings.TrimPrefix(rangeHeader, "bytes="), "-")
-	if len(parts) != 2 {
-		return c.Status(http.StatusRequestedRangeNotSatisfiable).SendString("Invalid Range")
-	}
-
-	start, _ := strconv.ParseInt(parts[0], 10, 64)
-	var end int64
-	if parts[1] == "" {
-		end = fileSize - 1
-	} else {
-		end, _ = strconv.ParseInt(parts[1], 10, 64)
-	}
-
-	// 如果请求的范围超出文件大小，调整 end 值（而不是返回 416）
-	if start < 0 || start >= fileSize {
-		return c.Status(http.StatusRequestedRangeNotSatisfiable).SendString("Invalid Range")
-	}
-	if end >= fileSize {
-		end = fileSize - 1
-	}
-	if start > end {
+	start, end, err := parseSingleRange(rangeHeader, fileSize)
+	if err != nil {
+		c.Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
 		return c.Status(http.StatusRequestedRangeNotSatisfiable).SendString("Invalid Range")
 	}
 
 	contentLength := end - start + 1
 
-	// 读取指定范围的数据到 buffer
 	file, err := os.Open(filePath)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).SendString("Failed to open file")
 	}
 	defer file.Close()
 
-	_, err = file.Seek(start, 0)
+	_, err = file.Seek(start, io.SeekStart)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).SendString("Failed to seek file")
-	}
-
-	// 读取指定长度的数据到 buffer，避免流的问题
-	buffer := make([]byte, contentLength)
-	_, err = io.ReadFull(file, buffer)
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return c.Status(http.StatusInternalServerError).SendString("Failed to read file")
 	}
 
 	c.Status(http.StatusPartialContent)
 	c.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, fileSize))
 	c.Set("Content-Length", strconv.FormatInt(contentLength, 10))
-	c.Set("Cache-Control", "public, max-age=3600")
+	c.Set("Cache-Control", "private, no-store")
 
-	return c.Send(buffer)
+	return c.SendStream(io.LimitReader(file, contentLength))
+}
+
+func parseSingleRange(rangeHeader string, fileSize int64) (int64, int64, error) {
+	if fileSize <= 0 {
+		return 0, 0, fmt.Errorf("empty file")
+	}
+
+	if !strings.HasPrefix(rangeHeader, "bytes=") {
+		return 0, 0, fmt.Errorf("invalid range unit")
+	}
+
+	rangeSpec := strings.TrimSpace(strings.TrimPrefix(rangeHeader, "bytes="))
+	if rangeSpec == "" || strings.Contains(rangeSpec, ",") {
+		return 0, 0, fmt.Errorf("multiple ranges not supported")
+	}
+
+	parts := strings.SplitN(rangeSpec, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid range format")
+	}
+
+	var start, end int64
+
+	switch {
+	case parts[0] == "" && parts[1] == "":
+		return 0, 0, fmt.Errorf("invalid range value")
+	case parts[0] == "":
+		suffixLen, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || suffixLen <= 0 {
+			return 0, 0, fmt.Errorf("invalid suffix range")
+		}
+		if suffixLen > fileSize {
+			suffixLen = fileSize
+		}
+		start = fileSize - suffixLen
+		end = fileSize - 1
+	case parts[1] == "":
+		parsedStart, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || parsedStart < 0 || parsedStart >= fileSize {
+			return 0, 0, fmt.Errorf("invalid start range")
+		}
+		start = parsedStart
+		end = fileSize - 1
+	default:
+		parsedStart, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || parsedStart < 0 || parsedStart >= fileSize {
+			return 0, 0, fmt.Errorf("invalid start range")
+		}
+		parsedEnd, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || parsedEnd < parsedStart {
+			return 0, 0, fmt.Errorf("invalid end range")
+		}
+		if parsedEnd >= fileSize {
+			parsedEnd = fileSize - 1
+		}
+		start = parsedStart
+		end = parsedEnd
+	}
+
+	if start < 0 || end < start || end >= fileSize {
+		return 0, 0, fmt.Errorf("range outside file")
+	}
+
+	return start, end, nil
 }
 
 // DownloadZip 批量下载为ZIP - 流式传输，无需临时文件

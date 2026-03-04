@@ -30,11 +30,11 @@ COPY --from=builder /app/ftpgo .
 RUN mkdir -p /data
 
 # 暴露端口
-EXPOSE 8080
+EXPOSE 7300
 
 # 设置环境变量
 ENV FTPGO_ROOT=/data
-ENV FTPGO_PORT=8080
+ENV FTPGO_PORT=7300
 
 # 运行
 CMD ["./ftpgo"]

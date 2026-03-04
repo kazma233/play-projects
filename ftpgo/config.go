@@ -12,6 +12,7 @@ type Config struct {
 	MaxFileSize int64  // 最大文件大小（字节）
 	AuthUser    string // Basic Auth 用户名
 	AuthPass    string // Basic Auth 密码
+	CORSOrigins string // CORS 允许来源，逗号分隔；为空则禁用跨域
 }
 
 // LoadConfig 加载配置
@@ -22,6 +23,7 @@ func LoadConfig() *Config {
 		MaxFileSize: getEnvAsInt64("FTPGO_MAX_SIZE", 1024*1024*1024), // 默认1GB
 		AuthUser:    getEnv("FTPGO_AUTH_USER", ""),
 		AuthPass:    getEnv("FTPGO_AUTH_PASS", ""),
+		CORSOrigins: getEnv("FTPGO_CORS_ORIGINS", ""),
 	}
 	return config
 }

@@ -7,11 +7,9 @@ import (
 	"io"
 	"log"
 	"mime"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -32,32 +30,35 @@ type FileSystem struct {
 
 // NewFileSystem 创建文件系统操作实例
 func NewFileSystem(root string) *FileSystem {
-	return &FileSystem{root: root}
+	cleanRoot := filepath.Clean(root)
+	if absRoot, err := filepath.Abs(cleanRoot); err == nil {
+		cleanRoot = absRoot
+	}
+
+	return &FileSystem{root: cleanRoot}
 }
 
 // normalizePath 规范化路径，防止目录遍历攻击
 func (fs *FileSystem) normalizePath(path string) (string, error) {
-	// 移除开头的 /
-	path = strings.TrimPrefix(path, "/")
+	normalizedPath := strings.ReplaceAll(path, "\\", "/")
+	normalizedPath = strings.TrimLeft(normalizedPath, "/")
+	normalizedPath = filepath.Clean(normalizedPath)
 
-	// 清理路径
-	path = filepath.Clean(path)
-
-	// 标准化路径分隔符以确保跨平台一致性
-	path = strings.ReplaceAll(path, "\\", "/")
-
-	// 确保路径不以 .. 开头或包含 .. 作为路径组件（防止目录遍历）
-	if strings.HasPrefix(path, "..") || strings.Contains(path, "/../") || strings.Contains(path, "/..") {
-		return "", fmt.Errorf("invalid path")
+	if normalizedPath == "." {
+		return fs.root, nil
 	}
 
-	// 拼接完整路径
-	fullPath := filepath.Join(fs.root, path)
+	if filepath.IsAbs(normalizedPath) {
+		return "", fmt.Errorf("absolute path is not allowed")
+	}
 
-	// 确保路径在根目录内
-	cleanFullPath := filepath.Clean(fullPath)
-	cleanRoot := filepath.Clean(fs.root)
-	if !strings.HasPrefix(cleanFullPath, cleanRoot) {
+	fullPath := filepath.Join(fs.root, normalizedPath)
+	relPath, err := filepath.Rel(fs.root, fullPath)
+	if err != nil {
+		return "", err
+	}
+
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path outside root directory")
 	}
 
@@ -145,83 +146,31 @@ func (fs *FileSystem) Rename(oldPath, newPath string) error {
 	return os.Rename(oldFullPath, newFullPath)
 }
 
-// GetFile 获取文件信息
-func (fs *FileSystem) GetFile(path string) (*FileInfo, error) {
-	fullPath, err := fs.normalizePath(path)
-	if err != nil {
-		log.Printf("normalizePath error for GetFile %s: %v", path, err)
-		return nil, err
-	}
-
-	info, err := os.Stat(fullPath)
-	if err != nil {
-		return nil, err
-	}
-
-	mimeType := ""
-	if !info.IsDir() {
-		mimeType = mime.TypeByExtension(filepath.Ext(info.Name()))
-		if mimeType == "" {
-			mimeType = "application/octet-stream"
-		}
-	}
-
-	return &FileInfo{
-		Name:     info.Name(),
-		Path:     path,
-		IsDir:    info.IsDir(),
-		Size:     info.Size(),
-		ModTime:  info.ModTime(),
-		MimeType: mimeType,
-	}, nil
-}
-
-// OpenFile 打开文件
-func (fs *FileSystem) OpenFile(path string) (*os.File, error) {
-	fullPath, err := fs.normalizePath(path)
-	if err != nil {
-		log.Printf("normalizePath error for OpenFile %s: %v", path, err)
-		return nil, err
-	}
-
-	return os.Open(fullPath)
-}
-
 // SaveFile 保存上传的文件
 func (fs *FileSystem) SaveFile(path string, reader io.Reader) error {
-	log.Printf("SaveFile called with path: %s", path)
-
 	fullPath, err := fs.normalizePath(path)
 	if err != nil {
-		log.Printf("normalizePath failed: %v", err)
 		return err
 	}
 
-	log.Printf("fullPath: %s", fullPath)
-
 	// 确保所有父目录存在
 	dirPath := filepath.Dir(fullPath)
-	log.Printf("Creating directory: %s", dirPath)
 	err = os.MkdirAll(dirPath, 0755)
 	if err != nil {
-		log.Printf("MkdirAll failed: %v", err)
 		return err
 	}
 
 	file, err := os.Create(fullPath)
 	if err != nil {
-		log.Printf("Create file failed: %v", err)
 		return err
 	}
 	defer file.Close()
 
-	log.Printf("Starting to copy data to file...")
-	written, err := io.Copy(file, reader)
-	log.Printf("Copied %d bytes, error: %v", written, err)
+	_, err = io.Copy(file, reader)
 	return err
 }
 
-// CreateZip 创建ZIP压缩文件 - 流式处理，支持并发
+// CreateZip 创建 ZIP 压缩文件（流式输出）
 func (fs *FileSystem) CreateZip(paths []string, w io.Writer) error {
 	zipWriter := zip.NewWriter(w)
 
@@ -231,22 +180,25 @@ func (fs *FileSystem) CreateZip(paths []string, w io.Writer) error {
 	})
 	defer zipWriter.Close()
 
-	// 使用有界并发池控制同时处理的文件数
-	const maxWorkers = 10
-	semaphore := make(chan struct{}, maxWorkers)
-	var mu sync.Mutex
 	var firstErr error
+	recordErr := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 
 	for _, path := range paths {
 		fullPath, err := fs.normalizePath(path)
 		if err != nil {
 			log.Printf("normalizePath error in CreateZip for path %s: %v", path, err)
+			recordErr(err)
 			continue
 		}
 
 		info, err := os.Stat(fullPath)
 		if err != nil {
 			log.Printf("Stat error for path %s: %v", fullPath, err)
+			recordErr(err)
 			continue
 		}
 
@@ -260,9 +212,6 @@ func (fs *FileSystem) CreateZip(paths []string, w io.Writer) error {
 					return nil
 				}
 
-				semaphore <- struct{}{}
-				defer func() { <-semaphore }()
-
 				relPath, err := filepath.Rel(fs.root, filePath)
 				if err != nil {
 					log.Printf("filepath.Rel error for %s: %v", filePath, err)
@@ -270,31 +219,28 @@ func (fs *FileSystem) CreateZip(paths []string, w io.Writer) error {
 				}
 
 				err = addFileToZip(zipWriter, filePath, relPath)
-				if err != nil && firstErr == nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-					}
-					mu.Unlock()
+				if err != nil {
+					log.Printf("addFileToZip error for %s: %v", filePath, err)
+					recordErr(err)
 				}
 				return nil // 继续处理其他文件
 			})
 			if err != nil {
 				log.Printf("WalkDir error for path %s: %v", fullPath, err)
+				recordErr(err)
 				continue
 			}
 		} else {
-			semaphore <- struct{}{}
 			relPath, err := filepath.Rel(fs.root, fullPath)
 			if err != nil {
 				log.Printf("filepath.Rel error for %s: %v", fullPath, err)
-				<-semaphore
+				recordErr(err)
 				continue
 			}
 			err = addFileToZip(zipWriter, fullPath, relPath)
-			<-semaphore
 			if err != nil {
 				log.Printf("addFileToZip error for %s: %v", fullPath, err)
+				recordErr(err)
 			}
 		}
 	}
@@ -304,6 +250,12 @@ func (fs *FileSystem) CreateZip(paths []string, w io.Writer) error {
 
 // addFileToZip 添加文件到ZIP
 func addFileToZip(zipWriter *zip.Writer, filePath, zipPath string) error {
+	zipPath = filepath.ToSlash(filepath.Clean(zipPath))
+	zipPath = strings.TrimPrefix(zipPath, "/")
+	if zipPath == "." || zipPath == "" || strings.HasPrefix(zipPath, "../") {
+		return fmt.Errorf("invalid zip path")
+	}
+
 	file, err := os.Open(filePath)
 	if err != nil {
 		return err
@@ -329,15 +281,4 @@ func addFileToZip(zipWriter *zip.Writer, filePath, zipPath string) error {
 
 	_, err = io.Copy(writer, file)
 	return err
-}
-
-// ServeFile 提供文件下载
-func (fs *FileSystem) ServeFile(path string, w http.ResponseWriter, r *http.Request) error {
-	fullPath, err := fs.normalizePath(path)
-	if err != nil {
-		return err
-	}
-
-	http.ServeFile(w, r, fullPath)
-	return nil
 }

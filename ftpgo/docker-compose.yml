@@ -12,8 +12,9 @@ services:
       - FTPGO_ROOT=/data
       - FTPGO_PORT=7300
       - FTPGO_MAX_SIZE=1073741824  # 1GB
-      - FTPGO_AUTH_USER=admin      # Basic Auth 用户名
-      - FTPGO_AUTH_PASS=admin123   # Basic Auth 密码
+      - FTPGO_CORS_ORIGINS=${FTPGO_CORS_ORIGINS:-}  # 逗号分隔，如 https://a.com,https://b.com
+      - FTPGO_AUTH_USER=${FTPGO_AUTH_USER:-}  # 建议通过 .env 注入
+      - FTPGO_AUTH_PASS=${FTPGO_AUTH_PASS:-}  # 建议通过 .env 注入
     restart: unless-stopped
 
 volumes:

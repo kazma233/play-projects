@@ -53,7 +53,7 @@ func main() {
 	})
 
 	// 设置中间件
-	SetupMiddleware(app)
+	SetupMiddleware(app, config)
 
 	// 启用Gzip/Brotli压缩（对API响应和静态资源）
 	app.Use(compress.New(compress.Config{
