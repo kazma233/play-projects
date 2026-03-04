@@ -1,9 +1,0 @@
-__debug_bin
-download
-db/**
-*.exe
-.idea
-.DS_Store
-*.gz
-.kiro
-lanc
