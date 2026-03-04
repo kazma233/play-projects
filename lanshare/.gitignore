@@ -1,5 +1,5 @@
 __debug_bin
-download/**
+download
 db/**
 *.exe
 .idea
