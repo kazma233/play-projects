@@ -224,49 +224,11 @@
         </div>
 
         <div class="mb-6">
-          <div class="flex items-center justify-between mb-2">
-            <label class="block text-gray-700">标签</label>
-            <div class="flex gap-2">
-              <button
-                @click="loadTags"
-                type="button"
-                class="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer"
-                title="刷新标签"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-<button
-                  @click="openTagsPage"
-                  type="button"
-                class="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center cursor-pointer"
-                title="新增标签"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div v-if="tags.length === 0" class="text-gray-400 text-sm py-2">
-            暂无标签，请前往标签管理页面创建
-          </div>
-          <div v-else class="flex flex-wrap gap-2">
-            <button
-              v-for="tag in tags"
-              :key="tag.id"
-              type="button"
-              @click="toggleTag(tag.id)"
-              class="px-3 py-1.5 rounded-full text-sm transition border-2 cursor-pointer"
-              :class="selectedTags.includes(String(tag.id)) 
-                ? 'border-transparent text-white' 
-                : 'border-gray-300 text-gray-700 hover:border-gray-400'"
-              :style="selectedTags.includes(String(tag.id)) ? { backgroundColor: tag.color } : {}"
-            >
-              {{ tag.name }}
-            </button>
-          </div>
+          <TagPicker
+            v-model="selectedTags"
+            label="标签"
+            empty-text="暂无标签，可直接新增"
+          />
         </div>
 
         <button
@@ -302,11 +264,12 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { imagesApi, tagsApi } from '@/api'
-import type { Tag, WatermarkConfig, SyncStartResult } from '@/types'
+import { imagesApi } from '@/api'
+import type { WatermarkConfig, SyncStartResult } from '@/types'
 import { defaultWatermarkConfig } from '@/types'
 import { loadWatermarkConfig, saveWatermarkConfig } from '@/utils/storage'
 import { createWatermarkCanvas, canvasToBlob, getImageDimensions } from '@/utils/watermark'
+import TagPicker from '@/components/tag/TagPicker.vue'
 
 interface FileWithPreview extends File {
   previewUrl?: string
@@ -320,7 +283,6 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const files = ref<FileWithPreview[]>([])
-const tags = ref<Tag[]>([])
 const selectedTags = ref<string[]>([])
 const uploading = ref(false)
 const processing = ref(false)
@@ -367,17 +329,7 @@ const handleSync = async () => {
   }
 }
 
-const loadTags = async () => {
-  try {
-    const res = await tagsApi.getAll()
-    tags.value = (res.data as Tag[]) || []
-  } catch (error) {
-    console.error('加载标签失败:', error)
-  }
-}
-
-onMounted(async () => {
-  await loadTags()
+onMounted(() => {
   watermarkConfig.value = loadWatermarkConfig()
 })
 
@@ -436,16 +388,6 @@ const removeFile = (index: number) => {
     updateMainPreview()
   } else {
     selectedIndex.value = 0
-  }
-}
-
-const toggleTag = (tagId: number) => {
-  const idStr = String(tagId)
-  const index = selectedTags.value.indexOf(idStr)
-  if (index > -1) {
-    selectedTags.value.splice(index, 1)
-  } else {
-    selectedTags.value.push(idStr)
   }
 }
 
@@ -526,10 +468,6 @@ const processFiles = async (): Promise<{
 
   processing.value = false
   return { originalFiles, watermarkFiles, thumbnailFiles, mapping }
-}
-
-const openTagsPage = () => {
-  window.open('/tags', '_blank')
 }
 
 const handleUpload = async () => {

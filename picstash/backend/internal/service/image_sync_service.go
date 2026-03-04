@@ -16,7 +16,23 @@ import (
 	"picstash/pkg/imageutil"
 )
 
-const asyncSyncTimeout = 2 * time.Hour
+const (
+	asyncSyncTimeout = 2 * time.Hour
+	syncBatchSize    = 10
+)
+
+type originalBatchResult struct {
+	CreatedCount int
+	UpdatedCount int
+	SkippedCount int
+	ErrorCount   int
+	NewImages    map[string]*model.Image
+}
+
+type deleteBatchResult struct {
+	DeletedCount int
+	ErrorCount   int
+}
 
 type ImageSyncService struct {
 	db         *sql.DB
@@ -173,12 +189,167 @@ func (s *ImageSyncService) syncFromStorageWithLogID(ctx context.Context, trigger
 
 	slog.Info("找到的原图文件", "log_id", logID, "count", len(originalFiles))
 
-	tx, err := s.db.Begin()
+	syncTag, dbImages, err := s.loadSyncContext(logID)
 	if err != nil {
-		errMsg := fmt.Sprintf("开始事务失败: %v", err)
+		errMsg := fmt.Sprintf("初始化同步上下文失败: %v", err)
 		if updateErr := s.markSyncLogFailed(logID, errMsg); updateErr != nil {
 			slog.Error("更新同步日志失败", "log_id", logID, "error", updateErr)
 		}
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+
+	dbImageMap := make(map[string]*model.Image)
+	for _, img := range dbImages {
+		dbImageMap[img.Path] = img
+	}
+
+	result := &SyncResult{LogID: logID}
+
+	totalFiles := len(originalFiles)
+	processedFiles := 0
+	errorCount := 0
+
+	if err := s.updateSyncLogStatus(logID, nil, totalFiles, processedFiles, errorCount, nil, "running"); err != nil {
+		slog.Error("初始化同步进度失败", "log_id", logID, "error", err)
+	}
+
+	for batchStart := 0; batchStart < len(originalFiles); batchStart += syncBatchSize {
+		batchEnd := batchStart + syncBatchSize
+		if batchEnd > len(originalFiles) {
+			batchEnd = len(originalFiles)
+		}
+
+		batch := originalFiles[batchStart:batchEnd]
+		slog.Info("处理原图批次", "log_id", logID, "batch_start", batchStart+1, "batch_end", batchEnd, "batch_size", len(batch))
+
+		batchResult, batchErr := s.processOriginalBatch(ctx, logID, batch, storageFileMap, dbImageMap, syncTag.ID)
+		processedFiles += len(batch)
+
+		if batchErr != nil {
+			errorCount += len(batch)
+			slog.Error("原图批次事务失败，已跳过该批", "log_id", logID, "batch_start", batchStart+1, "batch_end", batchEnd, "error", batchErr)
+		} else {
+			result.CreatedCount += batchResult.CreatedCount
+			result.UpdatedCount += batchResult.UpdatedCount
+			result.SkippedCount += batchResult.SkippedCount
+			errorCount += batchResult.ErrorCount
+			for path, image := range batchResult.NewImages {
+				dbImageMap[path] = image
+			}
+		}
+
+		if err := s.updateSyncLogStatus(logID, nil, totalFiles, processedFiles, errorCount, nil, "running"); err != nil {
+			slog.Error("更新同步日志进度失败", "log_id", logID, "error", err)
+		}
+	}
+
+	slog.Info("检查数据库中已删除的文件", "log_id", logID)
+	missingImages := make([]*model.Image, 0)
+	for _, dbImage := range dbImages {
+		if storageFileMap[dbImage.Path] == nil {
+			missingImages = append(missingImages, dbImage)
+		}
+	}
+
+	for batchStart := 0; batchStart < len(missingImages); batchStart += syncBatchSize {
+		batchEnd := batchStart + syncBatchSize
+		if batchEnd > len(missingImages) {
+			batchEnd = len(missingImages)
+		}
+
+		batch := missingImages[batchStart:batchEnd]
+		slog.Info("处理删除批次", "log_id", logID, "batch_start", batchStart+1, "batch_end", batchEnd, "batch_size", len(batch))
+
+		batchResult, batchErr := s.processDeleteBatch(logID, batch)
+		if batchErr != nil {
+			errorCount += len(batch)
+			slog.Error("删除批次事务失败，已跳过该批", "log_id", logID, "batch_start", batchStart+1, "batch_end", batchEnd, "error", batchErr)
+		} else {
+			result.DeletedCount += batchResult.DeletedCount
+			errorCount += batchResult.ErrorCount
+		}
+
+		if err := s.updateSyncLogStatus(logID, nil, totalFiles, processedFiles, errorCount, nil, "running"); err != nil {
+			slog.Error("更新同步日志进度失败", "log_id", logID, "error", err)
+		}
+	}
+
+	result.ErrorCount = errorCount
+
+	completedAt := time.Now()
+	status := "completed"
+	errorMessage := (*string)(nil)
+	if errorCount > 0 {
+		status = "completed_with_errors"
+	}
+
+	if err := s.updateSyncLogStatus(logID, &completedAt, totalFiles, processedFiles, errorCount, errorMessage, status); err != nil {
+		slog.Error("更新同步日志失败", "log_id", logID, "error", err)
+	}
+
+	slog.Info("同步完成", "log_id", logID, "created", result.CreatedCount, "updated", result.UpdatedCount, "deleted", result.DeletedCount, "skipped", result.SkippedCount, "errors", result.ErrorCount)
+
+	return result, nil
+}
+
+func (s *ImageSyncService) loadSyncContext(logID int64) (*model.Tag, []*model.Image, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, nil, fmt.Errorf("开始事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	imageRepo := repository.NewImageRepository(tx)
+
+	syncTag, err := imageRepo.GetOrCreateSyncTag()
+	if err != nil {
+		return nil, nil, fmt.Errorf("获取或创建同步标签失败: %w", err)
+	}
+	slog.Info("同步标签", "log_id", logID, "tag_id", syncTag.ID, "tag_name", syncTag.Name)
+
+	slog.Info("查询数据库所有图片", "log_id", logID)
+	dbImages, err := imageRepo.GetAllImagesNotDeleted()
+	if err != nil {
+		return nil, nil, fmt.Errorf("查询数据库图片失败: %w", err)
+	}
+	slog.Info("数据库图片", "log_id", logID, "total", len(dbImages))
+
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("提交事务失败: %w", err)
+	}
+
+	return syncTag, dbImages, nil
+}
+
+func (s *ImageSyncService) updateSyncLogStatus(logID int64, completedAt *time.Time, totalFiles, processedFiles, errorCount int, errorMessage *string, status string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("开始事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	syncLogRepo := repository.NewSyncLogRepository(tx)
+	if err := syncLogRepo.UpdateSyncLog(logID, completedAt, totalFiles, processedFiles, errorCount, errorMessage, status); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交事务失败: %w", err)
+	}
+
+	return nil
+}
+
+func (s *ImageSyncService) processOriginalBatch(
+	ctx context.Context,
+	logID int64,
+	batch []*storage.RepositoryFile,
+	storageFileMap map[string]*storage.RepositoryFile,
+	dbImageMap map[string]*model.Image,
+	syncTagID int64,
+) (*originalBatchResult, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
 		return nil, fmt.Errorf("开始事务失败: %w", err)
 	}
 	defer tx.Rollback()
@@ -186,72 +357,35 @@ func (s *ImageSyncService) syncFromStorageWithLogID(ctx context.Context, trigger
 	imageRepo := repository.NewImageRepository(tx)
 	syncLogRepo := repository.NewSyncLogRepository(tx)
 
-	result := &SyncResult{LogID: logID}
-
-	syncTag, err := imageRepo.GetOrCreateSyncTag()
-	if err != nil {
-		errMsg := "获取或创建同步标签失败"
-		completedAt := time.Now()
-		errorMessage := errMsg
-		_ = syncLogRepo.UpdateSyncLog(logID, &completedAt, 0, 0, 1, &errorMessage, "failed")
-		if commitErr := tx.Commit(); commitErr != nil {
-			slog.Error("提交失败状态事务失败", "log_id", logID, "error", commitErr)
-			if updateErr := s.markSyncLogFailed(logID, fmt.Sprintf("%s: %v", errMsg, commitErr)); updateErr != nil {
-				slog.Error("更新同步日志失败", "log_id", logID, "error", updateErr)
-			}
-		}
-		return nil, fmt.Errorf("%s: %w", errMsg, err)
-	}
-	slog.Info("同步标签", "log_id", logID, "tag_id", syncTag.ID, "tag_name", syncTag.Name)
-
-	slog.Info("查询数据库所有图片", "log_id", logID)
-	dbImages, err := imageRepo.GetAllImagesNotDeleted()
-	if err != nil {
-		errMsg := fmt.Sprintf("查询数据库图片失败: %v", err)
-		completedAt := time.Now()
-		errorMessage := errMsg
-		_ = syncLogRepo.UpdateSyncLog(logID, &completedAt, 0, 0, 1, &errorMessage, "failed")
-		if commitErr := tx.Commit(); commitErr != nil {
-			slog.Error("提交失败状态事务失败", "log_id", logID, "error", commitErr)
-			if updateErr := s.markSyncLogFailed(logID, fmt.Sprintf("%s: %v", errMsg, commitErr)); updateErr != nil {
-				slog.Error("更新同步日志失败", "log_id", logID, "error", updateErr)
-			}
-		}
-		return nil, fmt.Errorf("%s", errMsg)
-	}
-	slog.Info("数据库图片", "log_id", logID, "total", len(dbImages))
-
-	dbImageMap := make(map[string]*model.Image)
-	for _, img := range dbImages {
-		dbImageMap[img.Path] = img
+	result := &originalBatchResult{
+		NewImages: make(map[string]*model.Image),
 	}
 
-	totalFiles := len(originalFiles)
-	processedFiles := 0
-	errorCount := 0
-
-	for _, storageFile := range originalFiles {
-		processedFiles++
-		slog.Info("处理文件", "log_id", logID, "path", storageFile.Path, "progress", fmt.Sprintf("%d/%d", processedFiles, totalFiles))
-
+	for _, storageFile := range batch {
 		dbImage := dbImageMap[storageFile.Path]
+		if createdImage, ok := result.NewImages[storageFile.Path]; ok {
+			dbImage = createdImage
+		}
 
 		if dbImage == nil {
 			slog.Info("文件不在数据库中，创建新记录", "log_id", logID, "path", storageFile.Path)
-			image, err := s.createImageFromStorage(ctx, tx, storageFile, syncTag.ID, imageRepo)
+			image, err := s.createImageFromStorage(ctx, storageFile, syncTagID, imageRepo)
 			if err != nil {
 				errMsg := fmt.Sprintf("创建图片记录失败: %v", err)
 				slog.Error(errMsg, "log_id", logID, "path", storageFile.Path)
 				_ = syncLogRepo.CreateSyncFileLog(logID, storageFile.Path, "created", "failed", &storageFile.SHA, nil, &storageFile.Size, nil, &errMsg)
-				errorCount++
+				result.ErrorCount++
 				continue
 			}
 			slog.Info("创建成功", "log_id", logID, "path", storageFile.Path, "image_id", image.ID)
 			_ = syncLogRepo.CreateSyncFileLog(logID, storageFile.Path, "created", "success", &storageFile.SHA, nil, &storageFile.Size, nil, nil)
 			result.CreatedCount++
-			dbImageMap[storageFile.Path] = image
-			s.updateDerivedImageMeta(ctx, image.ID, storageFile.Path, storageFileMap, imageRepo, syncLogRepo, logID, &errorCount)
-		} else if dbImage.SHA != storageFile.SHA {
+			result.NewImages[storageFile.Path] = image
+			s.updateDerivedImageMeta(ctx, image.ID, storageFile.Path, storageFileMap, imageRepo, syncLogRepo, logID, &result.ErrorCount)
+			continue
+		}
+
+		if dbImage.SHA != storageFile.SHA {
 			slog.Info("文件SHA不一致，更新元数据", "log_id", logID, "path", storageFile.Path, "old_sha", dbImage.SHA, "new_sha", storageFile.SHA)
 			oldSHA := dbImage.SHA
 			oldSize := dbImage.Size
@@ -275,62 +409,58 @@ func (s *ImageSyncService) syncFromStorageWithLogID(ctx context.Context, trigger
 				errMsg := fmt.Sprintf("更新图片元数据失败: %v", err)
 				slog.Error(errMsg, "log_id", logID, "path", storageFile.Path)
 				_ = syncLogRepo.CreateSyncFileLog(logID, storageFile.Path, "updated", "failed", &storageFile.SHA, &oldSHA, &storageFile.Size, oldSize, &errMsg)
-				errorCount++
+				result.ErrorCount++
 				continue
 			}
 			slog.Info("更新成功", "log_id", logID, "path", storageFile.Path)
 			_ = syncLogRepo.CreateSyncFileLog(logID, storageFile.Path, "updated", "success", &storageFile.SHA, &oldSHA, &storageFile.Size, oldSize, nil)
 			result.UpdatedCount++
-			s.updateDerivedImageMeta(ctx, dbImage.ID, storageFile.Path, storageFileMap, imageRepo, syncLogRepo, logID, &errorCount)
-		} else {
-			slog.Info("SHA一致，跳过", "log_id", logID, "path", storageFile.Path)
-			_ = syncLogRepo.CreateSyncFileLog(logID, storageFile.Path, "skipped", "success", &storageFile.SHA, &storageFile.SHA, &storageFile.Size, &storageFile.Size, nil)
-			result.SkippedCount++
+			s.updateDerivedImageMeta(ctx, dbImage.ID, storageFile.Path, storageFileMap, imageRepo, syncLogRepo, logID, &result.ErrorCount)
+			continue
 		}
-	}
 
-	slog.Info("检查数据库中已删除的文件", "log_id", logID)
-	for _, dbImage := range dbImages {
-		storageFile := storageFileMap[dbImage.Path]
-		if storageFile == nil {
-			slog.Info("文件在存储中不存在，软删除", "log_id", logID, "path", dbImage.Path)
-			err := imageRepo.SoftDeleteImage(dbImage.ID)
-			if err != nil {
-				errMsg := fmt.Sprintf("软删除图片失败: %v", err)
-				slog.Error(errMsg, "log_id", logID, "path", dbImage.Path)
-				_ = syncLogRepo.CreateSyncFileLog(logID, dbImage.Path, "deleted", "failed", nil, &dbImage.SHA, nil, dbImage.Size, &errMsg)
-				errorCount++
-			} else {
-				slog.Info("软删除成功", "log_id", logID, "path", dbImage.Path)
-				_ = syncLogRepo.CreateSyncFileLog(logID, dbImage.Path, "deleted", "success", nil, &dbImage.SHA, nil, dbImage.Size, nil)
-				result.DeletedCount++
-			}
-		}
-	}
-
-	result.ErrorCount = errorCount
-
-	completedAt := time.Now()
-	status := "completed"
-	errorMessage := (*string)(nil)
-	if errorCount > 0 {
-		status = "completed_with_errors"
-	}
-
-	err = syncLogRepo.UpdateSyncLog(logID, &completedAt, totalFiles, processedFiles, errorCount, errorMessage, status)
-	if err != nil {
-		slog.Error("更新同步日志失败", "log_id", logID, "error", err)
+		slog.Info("SHA一致，跳过", "log_id", logID, "path", storageFile.Path)
+		_ = syncLogRepo.CreateSyncFileLog(logID, storageFile.Path, "skipped", "success", &storageFile.SHA, &storageFile.SHA, &storageFile.Size, &storageFile.Size, nil)
+		result.SkippedCount++
 	}
 
 	if err := tx.Commit(); err != nil {
-		errMsg := fmt.Sprintf("提交事务失败: %v", err)
-		if updateErr := s.markSyncLogFailed(logID, errMsg); updateErr != nil {
-			slog.Error("更新同步日志失败", "log_id", logID, "error", updateErr)
-		}
 		return nil, fmt.Errorf("提交事务失败: %w", err)
 	}
 
-	slog.Info("同步完成", "log_id", logID, "created", result.CreatedCount, "updated", result.UpdatedCount, "deleted", result.DeletedCount, "skipped", result.SkippedCount, "errors", result.ErrorCount)
+	return result, nil
+}
+
+func (s *ImageSyncService) processDeleteBatch(logID int64, batch []*model.Image) (*deleteBatchResult, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("开始事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	imageRepo := repository.NewImageRepository(tx)
+	syncLogRepo := repository.NewSyncLogRepository(tx)
+
+	result := &deleteBatchResult{}
+	for _, dbImage := range batch {
+		slog.Info("文件在存储中不存在，软删除", "log_id", logID, "path", dbImage.Path)
+		err := imageRepo.SoftDeleteImage(dbImage.ID)
+		if err != nil {
+			errMsg := fmt.Sprintf("软删除图片失败: %v", err)
+			slog.Error(errMsg, "log_id", logID, "path", dbImage.Path)
+			_ = syncLogRepo.CreateSyncFileLog(logID, dbImage.Path, "deleted", "failed", nil, &dbImage.SHA, nil, dbImage.Size, &errMsg)
+			result.ErrorCount++
+			continue
+		}
+
+		slog.Info("软删除成功", "log_id", logID, "path", dbImage.Path)
+		_ = syncLogRepo.CreateSyncFileLog(logID, dbImage.Path, "deleted", "success", nil, &dbImage.SHA, nil, dbImage.Size, nil)
+		result.DeletedCount++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("提交事务失败: %w", err)
+	}
 
 	return result, nil
 }
@@ -402,7 +532,7 @@ func (s *ImageSyncService) updateDerivedImageMeta(
 	}
 }
 
-func (s *ImageSyncService) createImageFromStorage(ctx context.Context, tx *sql.Tx, storageFile *storage.RepositoryFile, syncTagID int64, imageRepo repository.ImageRepositoryInterface) (*model.Image, error) {
+func (s *ImageSyncService) createImageFromStorage(ctx context.Context, storageFile *storage.RepositoryFile, syncTagID int64, imageRepo repository.ImageRepositoryInterface) (*model.Image, error) {
 	mimeType := "image/jpeg"
 	if strings.LastIndex(storageFile.Path, ".") > 0 {
 		mimeType = imageutil.GetMimeType(storageFile.Path)

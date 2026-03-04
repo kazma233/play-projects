@@ -2,11 +2,15 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"picstash/internal/model"
 )
+
+var ErrTagNameExists = errors.New("标签名称已存在")
 
 type TagRepositoryInterface interface {
 	Create(name, color string) (*model.Tag, error)
@@ -28,6 +32,9 @@ func NewTagRepository(tx *sql.Tx) TagRepositoryInterface {
 func (r *tagRepository) Create(name, color string) (*model.Tag, error) {
 	result, err := r.tx.Exec(`INSERT INTO tags (name, color) VALUES (?, ?)`, name, color)
 	if err != nil {
+		if isTagNameConflictError(err) {
+			return nil, ErrTagNameExists
+		}
 		return nil, fmt.Errorf("创建标签失败: %w", err)
 	}
 
@@ -48,6 +55,9 @@ func (r *tagRepository) Create(name, color string) (*model.Tag, error) {
 func (r *tagRepository) Update(id int64, name, color string) (*model.Tag, error) {
 	_, err := r.tx.Exec(`UPDATE tags SET name = ?, color = ? WHERE id = ?`, name, color, id)
 	if err != nil {
+		if isTagNameConflictError(err) {
+			return nil, ErrTagNameExists
+		}
 		return nil, fmt.Errorf("更新标签失败: %w", err)
 	}
 
@@ -124,4 +134,13 @@ func (r *tagRepository) GetByImageID(imageID int64) ([]*model.Tag, error) {
 		tags = append(tags, tag)
 	}
 	return tags, nil
+}
+
+func isTagNameConflictError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "unique constraint failed: tags.name")
 }

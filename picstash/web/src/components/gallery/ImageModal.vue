@@ -44,25 +44,12 @@
               </div>
             </div>
             <div v-if="authStore.isAuthenticated" class="mt-3">
-              <p class="text-xs text-gray-300 mb-2">标签</p>
-              <div v-if="allTags.length === 0" class="text-gray-400 text-sm py-1">
-                暂无标签
-              </div>
-              <div v-else class="flex flex-wrap gap-2">
-                <span
-                  v-for="tag in allTags"
-                  :key="tag.id"
-                  type="button"
-                  @click="toggleTag(tag.id)"
-                  class="px-3 py-1 rounded-full text-sm transition border-2 cursor-pointer"
-                  :class="selectedTagIds.includes(String(tag.id))
-                    ? 'border-transparent text-white'
-                    : 'border-gray-500 text-gray-300 hover:border-gray-400'"
-                  :style="selectedTagIds.includes(String(tag.id)) ? { backgroundColor: tag.color } : {}"
-                >
-                  {{ tag.name }}
-                </span>
-              </div>
+              <TagPicker
+                v-model="selectedTagIds"
+                label="标签"
+                empty-text="暂无标签，可直接新增"
+                theme="dark"
+              />
             </div>
           </div>
           <div class="flex flex-col gap-2">
@@ -82,10 +69,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
-import type { Image, Tag } from '@/types'
-import { imagesApi, tagsApi } from '@/api'
+import { nextTick, ref, watch } from 'vue'
+import type { Image } from '@/types'
+import { imagesApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import TagPicker from '@/components/tag/TagPicker.vue'
 
 const props = defineProps<{
   show: boolean
@@ -98,9 +86,9 @@ const emit = defineEmits(['close'])
 
 const authStore = useAuthStore()
 const deleting = ref(false)
-const allTags = ref<Tag[]>([])
 const selectedTagIds = ref<string[]>([])
 let previousImageId: number | null = null
+let syncingSelectedTags = false
 
 const formatSize = (bytes?: number) => {
   if (!bytes) return '-'
@@ -109,33 +97,17 @@ const formatSize = (bytes?: number) => {
   return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`
 }
 
-const loadTags = async () => {
-  try {
-    const res = await tagsApi.getAll()
-    allTags.value = (res.data as Tag[]) || []
-  } catch (error) {
-    console.error('加载标签失败:', error)
-  }
-}
-
 const updateSelectedTags = () => {
+  syncingSelectedTags = true
   const currentIds = props.image.tags?.map(t => String(t.id)) || []
   const newIds = JSON.stringify(currentIds)
   const oldIds = JSON.stringify(selectedTagIds.value)
   if (newIds !== oldIds) {
     selectedTagIds.value = currentIds
   }
-}
-
-const toggleTag = async (tagId: number) => {
-  const idStr = String(tagId)
-  const index = selectedTagIds.value.indexOf(idStr)
-  if (index > -1) {
-    selectedTagIds.value.splice(index, 1)
-  } else {
-    selectedTagIds.value.push(idStr)
-  }
-  await handleSaveTags(selectedTagIds.value)
+  nextTick(() => {
+    syncingSelectedTags = false
+  })
 }
 
 const handleSaveTags = async (tagIds: string[]) => {
@@ -172,9 +144,30 @@ watch(() => props.image.id, () => {
   }
 })
 
-onMounted(async () => {
-  await loadTags()
+watch(() => selectedTagIds.value, async (newIds, oldIds) => {
+  if (!authStore.isAuthenticated || syncingSelectedTags) {
+    return
+  }
+
+  if (JSON.stringify(newIds) === JSON.stringify(oldIds)) {
+    return
+  }
+
+  await handleSaveTags(newIds)
+}, { deep: true })
+
+watch(() => props.show, (show) => {
+  if (!show) {
+    return
+  }
   previousImageId = props.image.id
   updateSelectedTags()
-})
+}, { immediate: true })
+
+watch(() => props.image.tags, () => {
+  if (!props.show || props.image.id !== previousImageId) {
+    return
+  }
+  updateSelectedTags()
+}, { deep: true })
 </script>

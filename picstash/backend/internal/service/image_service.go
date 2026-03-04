@@ -203,7 +203,7 @@ func (s *ImageService) UploadWithContent(
 
 	slog.Info("开始处理缩略图", "original_width", width, "original_height", height)
 
-	if thumbnailContent != nil && len(thumbnailContent) > 0 {
+	if len(thumbnailContent) > 0 {
 		slog.Info("使用前端传入的缩略图", "size", len(thumbnailContent))
 		thumbData := thumbnailContent
 		thumbWidth, thumbHeight, _, thumbErr := imageutil.GetImageInfo(thumbData)

@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"errors"
 	"log/slog"
 
+	"picstash/internal/repository"
 	"picstash/internal/service"
 
 	"github.com/gofiber/fiber/v3"
@@ -50,6 +52,11 @@ func (h *TagHandler) Create(c fiber.Ctx) error {
 
 	tag, err := h.tagService.Create(req.Name, req.Color)
 	if err != nil {
+		if errors.Is(err, repository.ErrTagNameExists) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "标签名称已存在",
+			})
+		}
 		slog.Error("创建标签失败", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "创建标签失败",
@@ -75,6 +82,11 @@ func (h *TagHandler) Update(c fiber.Ctx) error {
 
 	tag, err := h.tagService.Update(int64(id), req.Name, req.Color)
 	if err != nil {
+		if errors.Is(err, repository.ErrTagNameExists) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"error": "标签名称已存在",
+			})
+		}
 		slog.Error("更新标签失败", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "更新标签失败",
