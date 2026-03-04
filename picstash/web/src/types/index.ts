@@ -122,3 +122,9 @@ export interface SyncResult {
   error_count: number;
   log_id: number;
 }
+
+export interface SyncStartResult {
+  log_id: number;
+  started: boolean;
+  status: "running";
+}

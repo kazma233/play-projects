@@ -14,12 +14,14 @@ import (
 )
 
 type ImageHandler struct {
-	imageService *service.ImageService
+	imageService     *service.ImageService
+	imageSyncService *service.ImageSyncService
 }
 
-func NewImageHandler(imageService *service.ImageService) *ImageHandler {
+func NewImageHandler(imageService *service.ImageService, imageSyncService *service.ImageSyncService) *ImageHandler {
 	return &ImageHandler{
-		imageService: imageService,
+		imageService:     imageService,
+		imageSyncService: imageSyncService,
 	}
 }
 
@@ -243,8 +245,7 @@ func (h *ImageHandler) SyncFromStorage(c fiber.Ctx) error {
 	email := c.Locals("email").(string)
 	slog.Info("开始处理同步请求", "user", email)
 
-	ctx := c.RequestCtx()
-	result, err := h.imageService.SyncFromStorage(ctx, email)
+	result, err := h.imageSyncService.StartSyncFromStorageAsync(email)
 	if err != nil {
 		slog.Error("同步失败", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -253,15 +254,17 @@ func (h *ImageHandler) SyncFromStorage(c fiber.Ctx) error {
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"message": "同步完成",
+	message := "同步任务正在进行中"
+	if result.Started {
+		message = "同步任务已开始"
+	}
+
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"message": message,
 		"data": map[string]interface{}{
-			"created_count": result.CreatedCount,
-			"updated_count": result.UpdatedCount,
-			"deleted_count": result.DeletedCount,
-			"skipped_count": result.SkippedCount,
-			"error_count":   result.ErrorCount,
-			"log_id":        result.LogID,
+			"log_id":  result.LogID,
+			"started": result.Started,
+			"status":  result.Status,
 		},
 	})
 }

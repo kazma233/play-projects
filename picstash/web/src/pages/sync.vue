@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { syncApi } from '@/api/sync'
 import type { SyncLog, SyncFileLog, PaginatedResponse } from '@/types'
 
@@ -136,6 +136,7 @@ const fileLogsLoading = ref(false)
 const noMore = ref(false)
 const page = ref(1)
 const limit = 20
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const loadLogs = async (loadMore = false) => {
   if (loading.value || loadingMore.value || (loadMore && noMore.value)) return
@@ -243,5 +244,16 @@ const getActionText = (action: string) => {
 
 onMounted(() => {
   loadLogs()
+
+  refreshTimer = setInterval(() => {
+    loadLogs()
+  }, 5000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
 })
 </script>

@@ -60,6 +60,7 @@ func main() {
 	pathPrefix := cfg.Storage.PathPrefix
 
 	imageService := service.NewImageService(database.GetDB(), storageInstance, pathPrefix)
+	imageSyncService := service.NewImageSyncService(database.GetDB(), storageInstance, pathPrefix)
 	tagService := service.NewTagService(database.GetDB())
 
 	app := fiber.New(fiber.Config{
@@ -71,7 +72,7 @@ func main() {
 	app.Use(middleware.CORS())
 	app.Use(middleware.Logger())
 
-	api.SetupRoutes(app, cfg, jwtService, emailService, verificationService, imageService, tagService, database.GetDB())
+	api.SetupRoutes(app, cfg, jwtService, emailService, verificationService, imageService, imageSyncService, tagService, database.GetDB())
 
 	// 设置本地存储的静态文件服务
 	setupStaticFiles(app, cfg, storageInstance)

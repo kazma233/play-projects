@@ -1,5 +1,5 @@
 import { api } from "./client";
-import type { ApiResponse, Image, SyncResult } from "@/types";
+import type { ApiResponse, Image, SyncStartResult } from "@/types";
 
 export const imagesApi = {
   getList: (params: { page?: number; limit?: number; tag_id?: number }) =>
@@ -29,5 +29,5 @@ export const imagesApi = {
   updateTags: (id: number, tagIds: number[]) =>
     api.put<ApiResponse>(`/images/${id}/tags`, { tag_ids: tagIds }),
 
-  sync: () => api.post<ApiResponse<SyncResult>>("/images/sync"),
+  sync: () => api.post<ApiResponse<SyncStartResult>>("/images/sync"),
 };

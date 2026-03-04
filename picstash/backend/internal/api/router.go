@@ -19,11 +19,12 @@ func SetupRoutes(
 	emailService *auth.EmailService,
 	verificationService *auth.VerificationCodeService,
 	imageService *service.ImageService,
+	imageSyncService *service.ImageSyncService,
 	tagService *service.TagService,
 	db *sql.DB,
 ) {
 	authHandler := handler.NewAuthHandler(emailService, verificationService, jwtService, &cfg.Auth)
-	imageHandler := handler.NewImageHandler(imageService)
+	imageHandler := handler.NewImageHandler(imageService, imageSyncService)
 	tagHandler := handler.NewTagHandler(tagService)
 	syncLogHandler := handler.NewSyncLogHandler(db)
 	configHandler := handler.NewConfigHandler(cfg.Auth.HomeAuth)

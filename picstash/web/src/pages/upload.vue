@@ -20,9 +20,9 @@
         </router-link>
       </div>
 
-      <div v-if="syncResult" class="mb-4 p-3 bg-blue-50 rounded-lg text-sm">
-        <p class="font-medium mb-1">✅ 同步完成</p>
-        <p>新增: {{ syncResult.created_count }} | 更新: {{ syncResult.updated_count }} | 删除: {{ syncResult.deleted_count }} | 跳过: {{ syncResult.skipped_count }} | 错误: {{ syncResult.error_count }}</p>
+      <div v-if="syncTask" class="mb-4 p-3 bg-blue-50 rounded-lg text-sm">
+        <p class="font-medium mb-1">⏳ {{ syncTask.started ? '同步任务已开始' : '同步任务进行中' }}</p>
+        <p>日志ID: {{ syncTask.log_id }}，可前往“查看同步日志”追踪进度</p>
       </div>
 
       <form @submit.prevent="handleUpload">
@@ -303,7 +303,7 @@ import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { imagesApi, tagsApi } from '@/api'
-import type { Tag, WatermarkConfig, SyncResult } from '@/types'
+import type { Tag, WatermarkConfig, SyncStartResult } from '@/types'
 import { defaultWatermarkConfig } from '@/types'
 import { loadWatermarkConfig, saveWatermarkConfig } from '@/utils/storage'
 import { createWatermarkCanvas, canvasToBlob, getImageDimensions } from '@/utils/watermark'
@@ -330,7 +330,7 @@ const uploadProgress = ref<number>(0)
 const objectUrls: string[] = []
 
 const syncing = ref(false)
-const syncResult = ref<SyncResult | null>(null)
+const syncTask = ref<SyncStartResult | null>(null)
 
 const showWatermarkSettings = ref(false)
 const watermarkConfig = ref<WatermarkConfig>({ ...defaultWatermarkConfig })
@@ -350,11 +350,15 @@ const revokePreviewUrls = () => {
 
 const handleSync = async () => {
   syncing.value = true
-  syncResult.value = null
+  syncTask.value = null
   try {
     const res = await imagesApi.sync()
-    syncResult.value = res.data.data as SyncResult
-    alert('同步成功')
+    syncTask.value = res.data.data as SyncStartResult
+    if (syncTask.value.started) {
+      alert('同步任务已开始，请在同步日志页查看进度')
+    } else {
+      alert('已有同步任务在进行中，请在同步日志页查看进度')
+    }
   } catch (error) {
     alert('同步失败')
     console.error('同步失败:', error)
