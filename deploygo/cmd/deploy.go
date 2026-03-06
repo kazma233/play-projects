@@ -3,7 +3,6 @@ package cmd
 import (
 	"log"
 
-	"deploygo/internal/config"
 	"deploygo/internal/stage"
 
 	"github.com/spf13/cobra"
@@ -27,11 +26,11 @@ var DeployCmd = &cobra.Command{
 		log.Printf("Project directory: %s", basicPath)
 
 		if deployStep != "" {
-			step := config.FindDeploymentStep(cfg.Deploys, deployStep)
+			step := cfg.FindDeployStep(deployStep)
 			if step == nil {
 				log.Fatalf("Deploy step '%s' not found", deployStep)
 			}
-			if err := stage.RunDeploys(cfg, []config.DeploymentStep{*step}, basicPath); err != nil {
+			if err := stage.RunDeploy(cfg, step, basicPath); err != nil {
 				log.Fatalf("Failed to execute '%s': %v", deployStep, err)
 			}
 		} else {

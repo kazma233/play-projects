@@ -14,11 +14,32 @@ import (
 )
 
 func RunBuilds(runtime container.ContainerRuntime, builds []config.StageConfig, projectDir string) error {
-	for i, build := range builds {
-		log.Printf("Running build %d/%d: %s (runtime: %s, image: %s)", i+1, len(builds), build.Name, runtime.Name(), build.Image)
-		if err := runBuild(runtime, build, projectDir); err != nil {
-			return fmt.Errorf("build %q failed: %w", build.Name, err)
+	for i := range builds {
+		if err := runBuildEntry(runtime, &builds[i], projectDir, i+1, len(builds)); err != nil {
+			return err
 		}
+	}
+
+	return nil
+}
+
+func RunBuild(runtime container.ContainerRuntime, build *config.StageConfig, projectDir string) error {
+	return runBuildEntry(runtime, build, projectDir, 0, 0)
+}
+
+func runBuildEntry(runtime container.ContainerRuntime, build *config.StageConfig, projectDir string, index, total int) error {
+	if build == nil {
+		return fmt.Errorf("build is nil")
+	}
+
+	if total > 0 {
+		log.Printf("Running build %d/%d: %s (runtime: %s, image: %s)", index, total, build.Name, runtime.Name(), build.Image)
+	} else {
+		log.Printf("Running build: %s (runtime: %s, image: %s)", build.Name, runtime.Name(), build.Image)
+	}
+
+	if err := runBuild(runtime, *build, projectDir); err != nil {
+		return fmt.Errorf("build %q failed: %w", build.Name, err)
 	}
 
 	return nil

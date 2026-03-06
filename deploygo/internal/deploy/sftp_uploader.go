@@ -87,7 +87,7 @@ func remoteTempPath(dest string, now time.Time) string {
 	dest = filepath.ToSlash(dest)
 	dir := filepath.ToSlash(filepath.Dir(dest))
 	base := filepath.Base(dest)
-	tempName := fmt.Sprintf(".%s.deploygo-upload-%d.tmp", base, now.UnixNano())
+	tempName := fmt.Sprintf(".%s-%d.tmp", base, now.Unix())
 	return filepath.ToSlash(filepath.Join(dir, tempName))
 }
 

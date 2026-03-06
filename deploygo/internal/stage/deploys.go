@@ -11,27 +11,48 @@ import (
 )
 
 func RunDeploys(cfg *config.Config, deploys []config.DeploymentStep, projectDir string) error {
-	for i, step := range deploys {
-		log.Printf("Executing deploy %d/%d: %s", i+1, len(deploys), step.Name)
-
-		server := config.GetServer(cfg, step.Server)
-		if server == nil {
-			return fmt.Errorf("server '%s' not found in configuration", step.Server)
-		}
-
-		if len(step.Commands) > 0 {
-			if err := runSSHStep(server, &step); err != nil {
-				return err
-			}
-		} else if step.From != "" && step.To != "" {
-			if err := runTransferStep(server, &step, projectDir); err != nil {
-				return err
-			}
-		} else {
-			return fmt.Errorf("deploy step '%s' has no commands or from/to fields", step.Name)
+	for i := range deploys {
+		if err := runDeployEntry(cfg, &deploys[i], projectDir, i+1, len(deploys)); err != nil {
+			return err
 		}
 	}
+
 	return nil
+}
+
+func RunDeploy(cfg *config.Config, step *config.DeploymentStep, projectDir string) error {
+	return runDeployEntry(cfg, step, projectDir, 0, 0)
+}
+
+func runDeployEntry(cfg *config.Config, step *config.DeploymentStep, projectDir string, index, total int) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+
+	if step == nil {
+		return fmt.Errorf("deploy step is nil")
+	}
+
+	if total > 0 {
+		log.Printf("Executing deploy %d/%d: %s", index, total, step.Name)
+	} else {
+		log.Printf("Executing deploy: %s", step.Name)
+	}
+
+	server := cfg.FindServer(step.Server)
+	if server == nil {
+		return fmt.Errorf("server '%s' not found in configuration", step.Server)
+	}
+
+	if len(step.Commands) > 0 {
+		return runSSHStep(server, step)
+	}
+
+	if step.From != "" && step.To != "" {
+		return runTransferStep(server, step, projectDir)
+	}
+
+	return fmt.Errorf("deploy step '%s' has no commands or from/to fields", step.Name)
 }
 
 func runSSHStep(server *config.ServerConfig, step *config.DeploymentStep) error {

@@ -3,7 +3,6 @@ package cmd
 import (
 	"log"
 
-	"deploygo/internal/config"
 	"deploygo/internal/container"
 	"deploygo/internal/stage"
 
@@ -37,11 +36,11 @@ var BuildCmd = &cobra.Command{
 		log.Printf("Project directory: %s", basicPath)
 
 		if buildStage != "" {
-			build := config.FindStage(cfg.Builds, buildStage)
+			build := cfg.FindBuild(buildStage)
 			if build == nil {
 				log.Fatalf("Build '%s' not found", buildStage)
 			}
-			if err := stage.RunBuilds(containerMgr, []config.StageConfig{*build}, basicPath); err != nil {
+			if err := stage.RunBuild(containerMgr, build, basicPath); err != nil {
 				log.Fatalf("Failed to build '%s': %v", buildStage, err)
 			}
 		} else {

@@ -73,6 +73,11 @@ type ConfigInfo struct {
 	FilePath string // 配置文件路径
 }
 
+type CleanupConfig struct {
+	Enable bool     `yaml:"enable"` // 是否执行清理，设为 true 会删除 source 目录
+	Dirs   []string `yaml:"dirs"`   // 额外清理的目录，相对于 workspace/<project>/
+}
+
 func LoadConfigInfo(workspaceDir string) ([]ConfigInfo, error) {
 	entries, err := os.ReadDir(workspaceDir)
 	if err != nil {
@@ -134,34 +139,4 @@ func applyEnvSubstitution(cfg *Config) {
 			cfg.Deploys[i].Commands[j] = os.ExpandEnv(cfg.Deploys[i].Commands[j])
 		}
 	}
-}
-
-func FindStage(stages []StageConfig, name string) *StageConfig {
-	for i := range stages {
-		if stages[i].Name == name {
-			return &stages[i]
-		}
-	}
-	return nil
-}
-
-func FindDeploymentStep(steps []DeploymentStep, name string) *DeploymentStep {
-	for i := range steps {
-		if steps[i].Name == name {
-			return &steps[i]
-		}
-	}
-	return nil
-}
-
-func GetServer(cfg *Config, name string) *ServerConfig {
-	if server, ok := cfg.Servers[name]; ok {
-		return &server
-	}
-	return nil
-}
-
-type CleanupConfig struct {
-	Enable bool     `yaml:"enable"` // 是否执行清理，设为 true 会删除 source 目录
-	Dirs   []string `yaml:"dirs"`   // 额外清理的目录，相对于 workspace/<project>/
 }
