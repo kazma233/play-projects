@@ -14,6 +14,7 @@ for building and deploying applications.`,
 }
 
 func init() {
+	RootCmd.PersistentFlags().StringVarP(&projectName, "project", "P", "", "Project name")
 	RootCmd.AddCommand(BuildCmd)
 	RootCmd.AddCommand(DeployCmd)
 	RootCmd.AddCommand(PipelineCmd)

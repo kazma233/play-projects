@@ -35,10 +35,7 @@ func RunDeploys(cfg *config.Config, deploys []config.DeploymentStep, projectDir 
 }
 
 func runSSHStep(server *config.ServerConfig, step *config.DeploymentStep) error {
-	executor, err := deploy.NewSSHExecutor(server)
-	if err != nil {
-		return fmt.Errorf("failed to create SSH executor: %w", err)
-	}
+	executor := deploy.NewSSHExecutor(server)
 	defer executor.Close()
 
 	if len(step.Commands) == 0 {
@@ -71,10 +68,7 @@ func runTransferStep(server *config.ServerConfig, step *config.DeploymentStep, p
 		return fmt.Errorf("failed to stat source: %w", err)
 	}
 
-	uploader, err := deploy.NewSFTPUploader(server)
-	if err != nil {
-		return fmt.Errorf("failed to create SFTP uploader: %w", err)
-	}
+	uploader := deploy.NewSFTPUploader(server)
 	defer uploader.Close()
 
 	log.Printf("SFTP transferring: %s -> %s", source, dest)

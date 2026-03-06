@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"log"
-	"os"
-	"path/filepath"
 
 	"deploygo/internal/config"
 	"deploygo/internal/stage"
@@ -18,21 +16,14 @@ var DeployCmd = &cobra.Command{
 	Short: "Deploy the application",
 	Long:  `Execute deployment steps defined in workspace/<project>/config.yaml`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if projectName == "" {
-			log.Fatal("Please specify a project using -P flag")
-		}
-
-		configPath := filepath.Join(config.WorkspaceDir, projectName, "config.yaml")
-		if _, err := os.Stat(configPath); os.IsNotExist(err) {
-			log.Fatalf("Project '%s' not found (file: %s)", projectName, configPath)
-		}
-
-		cfg, basicPath, err := config.Load(configPath)
+		projectCtx, err := loadSelectedProjectConfig()
 		if err != nil {
-			log.Fatalf("Failed to load configuration: %v", err)
+			log.Fatal(err)
 		}
+		cfg := projectCtx.Config
+		basicPath := projectCtx.ProjectDir
 
-		log.Printf("Project: %s", projectName)
+		log.Printf("Project: %s", projectCtx.Name)
 		log.Printf("Project directory: %s", basicPath)
 
 		if deployStep != "" {
@@ -54,6 +45,5 @@ var DeployCmd = &cobra.Command{
 }
 
 func init() {
-	DeployCmd.Flags().StringVarP(&projectName, "project", "P", "", "Project name")
 	DeployCmd.Flags().StringVarP(&deployStep, "step", "s", "", "Specific deployment step to execute")
 }

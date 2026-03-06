@@ -24,6 +24,11 @@ go build -o deploygo .
 go run main.go -P myproject pipeline
 ```
 
+交互式终端下，如果不传 `-P/--project`：
+- 只有一个项目时会自动选中；
+- 有多个项目时会显示项目列表并提示输入序号；
+- 在 CI、脚本或其他非交互场景下，仍建议显式传 `-P`。
+
 ## 快速开始
 
 ### 1. 创建项目目录
@@ -49,6 +54,9 @@ workspace/
 ```bash
 # 执行完整流水线（write + 构建 + 部署）
 deploygo -P myproject pipeline
+
+# 交互模式下也可以省略 -P，程序会自动选择或提示选择项目
+deploygo pipeline
 
 # 仅构建
 deploygo -P myproject build

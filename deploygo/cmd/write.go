@@ -17,8 +17,8 @@ var WriteCmd = &cobra.Command{
 	Short: "Copy overlays to source directory",
 	Long:  `Copy all files from overlays/ to source/ directory`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if projectName == "" {
-			log.Fatal("Please specify a project using -P flag")
+		if err := ensureProjectSelected(); err != nil {
+			log.Fatal(err)
 		}
 
 		projectDir := filepath.Join(config.WorkspaceDir, projectName)
@@ -65,8 +65,4 @@ func copyOverlays(src, dst string) error {
 
 		return stage.CopyFile(path, targetPath)
 	})
-}
-
-func init() {
-	WriteCmd.Flags().StringVarP(&projectName, "project", "P", "", "Project name")
 }
