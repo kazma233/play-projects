@@ -270,6 +270,7 @@ import { defaultWatermarkConfig } from '@/types'
 import { loadWatermarkConfig, saveWatermarkConfig } from '@/utils/storage'
 import { createWatermarkCanvas, canvasToBlob, getImageDimensions } from '@/utils/watermark'
 import TagPicker from '@/components/tag/TagPicker.vue'
+import { useNotifications } from '@/utils/notification'
 
 interface FileWithPreview extends File {
   previewUrl?: string
@@ -281,6 +282,7 @@ interface FileWithPreview extends File {
 
 const router = useRouter()
 const authStore = useAuthStore()
+const { notifyError, notifyInfo, notifySuccess } = useNotifications()
 
 const files = ref<FileWithPreview[]>([])
 const selectedTags = ref<string[]>([])
@@ -317,13 +319,13 @@ const handleSync = async () => {
     const res = await imagesApi.sync()
     syncTask.value = res.data.data as SyncStartResult
     if (syncTask.value.started) {
-      alert('同步任务已开始，请在同步日志页查看进度')
+      notifySuccess('同步任务已开始，请在同步日志页查看进度')
     } else {
-      alert('已有同步任务在进行中，请在同步日志页查看进度')
+      notifyInfo('已有同步任务在进行中，请在同步日志页查看进度')
     }
   } catch (error) {
-    alert('同步失败')
     console.error('同步失败:', error)
+    notifyError('同步失败')
   } finally {
     syncing.value = false
   }

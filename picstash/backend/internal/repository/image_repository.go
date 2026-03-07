@@ -12,7 +12,8 @@ type ImageRepositoryInterface interface {
 	CreateImage(image *model.Image) (int64, error)
 	AddImageTags(imageID int64, tagIDs []int) error
 	DeleteImageTags(imageID int64) error
-	GetImages(page, limit int, tagID *int) ([]*model.Image, int, error)
+	GetImagesByCursor(cursor *model.ImageListCursor, limit int, tagID *int) ([]*model.Image, error)
+	CountImages(tagID *int) (int, error)
 	GetImageByID(id int64) (*model.Image, error)
 	SoftDeleteImage(id int64) error
 	UpdateImageTags(imageID int64, tagIDs []int) error
@@ -78,9 +79,7 @@ func (r *imageRepository) DeleteImageTags(imageID int64) error {
 	return nil
 }
 
-func (r *imageRepository) GetImages(page, limit int, tagID *int) ([]*model.Image, int, error) {
-	offset := (page - 1) * limit
-
+func (r *imageRepository) GetImagesByCursor(cursor *model.ImageListCursor, limit int, tagID *int) ([]*model.Image, error) {
 	var args []interface{}
 	query := `
 		SELECT id, path, url, sha,
@@ -94,26 +93,21 @@ func (r *imageRepository) GetImages(page, limit int, tagID *int) ([]*model.Image
 	`
 
 	if tagID != nil {
-		query = `
-			SELECT id, path, url, sha,
-				   thumbnail_path, thumbnail_url, thumbnail_sha,
-				   watermark_path, watermark_url, watermark_sha, watermark_size,
-				   original_filename, filename, size, thumbnail_size,
-				   mime_type, width, height, has_thumbnail, has_watermark,
-				   uploaded_at, thumbnail_width, thumbnail_height
-			FROM images
-			WHERE deleted_at IS NULL
-			AND id IN (SELECT image_id FROM image_tags WHERE tag_id = ?)
-		`
+		query += ` AND id IN (SELECT image_id FROM image_tags WHERE tag_id = ?)`
 		args = append(args, *tagID)
 	}
 
-	query += ` ORDER BY uploaded_at DESC LIMIT ? OFFSET ?`
-	args = append(args, limit, offset)
+	if cursor != nil {
+		query += ` AND id < ?`
+		args = append(args, cursor.ID)
+	}
+
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
 
 	rows, err := r.tx.Query(query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("查询图片列表失败: %w", err)
+		return nil, fmt.Errorf("查询图片列表失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -129,42 +123,19 @@ func (r *imageRepository) GetImages(page, limit int, tagID *int) ([]*model.Image
 			&img.UploadedAt, &img.ThumbnailWidth, &img.ThumbnailHeight,
 		)
 		if err != nil {
-			return nil, 0, fmt.Errorf("扫描图片数据失败: %w", err)
+			return nil, fmt.Errorf("扫描图片数据失败: %w", err)
 		}
 		images = append(images, img)
 	}
 
-	if len(images) > 0 {
-		imageIDs := make([]int64, len(images))
-		for i, img := range images {
-			imageIDs[i] = img.ID
-		}
-
-		tagRows, err := r.tx.Query(`
-			SELECT it.image_id, t.id, t.name, t.color, t.created_at
-			FROM tags t
-			INNER JOIN image_tags it ON t.id = it.tag_id
-			WHERE it.image_id IN (`+placeholders(len(imageIDs))+`)
-		`, int64sToInterfaces(imageIDs...)...)
-		if err != nil {
-			return nil, 0, fmt.Errorf("查询图片标签失败: %w", err)
-		}
-		defer tagRows.Close()
-
-		tagMap := make(map[int64][]model.Tag)
-		for tagRows.Next() {
-			var imageID int64
-			var tag model.Tag
-			if err := tagRows.Scan(&imageID, &tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt); err != nil {
-				continue
-			}
-			tagMap[imageID] = append(tagMap[imageID], tag)
-		}
-		for _, img := range images {
-			img.Tags = tagMap[img.ID]
-		}
+	if err := r.loadImageTags(images); err != nil {
+		return nil, err
 	}
 
+	return images, nil
+}
+
+func (r *imageRepository) CountImages(tagID *int) (int, error) {
 	var countQuery string
 	var countArgs []interface{}
 	if tagID != nil {
@@ -175,12 +146,12 @@ func (r *imageRepository) GetImages(page, limit int, tagID *int) ([]*model.Image
 	}
 
 	var total int
-	err = r.tx.QueryRow(countQuery, countArgs...).Scan(&total)
+	err := r.tx.QueryRow(countQuery, countArgs...).Scan(&total)
 	if err != nil {
-		return nil, 0, fmt.Errorf("查询图片总数失败: %w", err)
+		return 0, fmt.Errorf("查询图片总数失败: %w", err)
 	}
 
-	return images, total, nil
+	return total, nil
 }
 
 func (r *imageRepository) GetImageByID(id int64) (*model.Image, error) {
@@ -297,6 +268,44 @@ func int64sToInterfaces(nums ...int64) []interface{} {
 		interfaces[i] = n
 	}
 	return interfaces
+}
+
+func (r *imageRepository) loadImageTags(images []*model.Image) error {
+	if len(images) == 0 {
+		return nil
+	}
+
+	imageIDs := make([]int64, len(images))
+	for i, img := range images {
+		imageIDs[i] = img.ID
+	}
+
+	tagRows, err := r.tx.Query(`
+		SELECT it.image_id, t.id, t.name, t.color, t.created_at
+		FROM tags t
+		INNER JOIN image_tags it ON t.id = it.tag_id
+		WHERE it.image_id IN (`+placeholders(len(imageIDs))+`)
+	`, int64sToInterfaces(imageIDs...)...)
+	if err != nil {
+		return fmt.Errorf("查询图片标签失败: %w", err)
+	}
+	defer tagRows.Close()
+
+	tagMap := make(map[int64][]model.Tag)
+	for tagRows.Next() {
+		var imageID int64
+		var tag model.Tag
+		if err := tagRows.Scan(&imageID, &tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt); err != nil {
+			continue
+		}
+		tagMap[imageID] = append(tagMap[imageID], tag)
+	}
+
+	for _, img := range images {
+		img.Tags = tagMap[img.ID]
+	}
+
+	return nil
 }
 
 func (r *imageRepository) GetAllImagesNotDeleted() ([]*model.Image, error) {

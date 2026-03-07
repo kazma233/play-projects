@@ -22,10 +22,14 @@
       </div>
     </nav>
     <router-view />
+    <NotificationCenter />
+    <ConfirmDialog />
   </div>
 </template>
 
 <script setup lang="ts">
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import NotificationCenter from '@/components/NotificationCenter.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()

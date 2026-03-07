@@ -88,6 +88,14 @@ export interface PaginatedResponse<T> {
   limit: number;
 }
 
+export interface CursorPaginatedResponse<T> {
+  data: T[];
+  total: number;
+  limit: number;
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
 export interface SyncLog {
   id: number;
   triggered_by: string;

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,8 +27,8 @@ func NewImageHandler(imageService *service.ImageService, imageSyncService *servi
 }
 
 func (h *ImageHandler) GetList(c fiber.Ctx) error {
-	page, _ := strconv.Atoi(c.Query("page", "1"))
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	cursor := c.Query("cursor")
 	tagIDStr := c.Query("tag_id")
 
 	var tagID *int
@@ -38,19 +39,30 @@ func (h *ImageHandler) GetList(c fiber.Ctx) error {
 		}
 	}
 
-	images, total, err := h.imageService.GetList(page, limit, tagID)
+	result, err := h.imageService.GetList(cursor, limit, tagID)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidImageCursor) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "分页游标无效",
+			})
+		}
 		slog.Error("获取图片列表失败", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "获取图片列表失败",
 		})
 	}
 
+	var nextCursor interface{}
+	if result.NextCursor != "" {
+		nextCursor = result.NextCursor
+	}
+
 	return c.JSON(fiber.Map{
-		"data":  images,
-		"total": total,
-		"page":  page,
-		"limit": limit,
+		"data":        result.Images,
+		"total":       result.Total,
+		"limit":       result.Limit,
+		"has_more":    result.HasMore,
+		"next_cursor": nextCursor,
 	})
 }
 

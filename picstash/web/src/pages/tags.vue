@@ -61,7 +61,11 @@
 import { ref, onMounted } from 'vue'
 import { tagsApi } from '@/api'
 import type { Tag } from '@/types'
+import { useConfirm } from '@/utils/confirm'
+import { useNotifications } from '@/utils/notification'
 
+const { confirmAction } = useConfirm()
+const { notifyError, notifySuccess } = useNotifications()
 const tags = ref<Tag[]>([])
 const newTagName = ref('')
 const newTagColor = ref('#3B82F6')
@@ -77,12 +81,13 @@ const loadTags = async () => {
     tags.value = (res.data as Tag[]) || []
   } catch (error) {
     console.error('加载标签失败:', error)
+    notifyError('加载标签失败')
   }
 }
 
 const createTag = async () => {
   if (!newTagName.value) {
-    alert('请输入标签名称')
+    notifyError('请输入标签名称')
     return
   }
 
@@ -91,21 +96,31 @@ const createTag = async () => {
     await tagsApi.create({ name: newTagName.value, color: newTagColor.value })
     newTagName.value = ''
     await loadTags()
+    notifySuccess('标签已创建')
   } catch (error: any) {
-    alert(error.response?.data?.error || '创建失败')
+    notifyError(error.response?.data?.error || '创建失败')
   } finally {
     creating.value = false
   }
 }
 
 const deleteTag = async (id: number) => {
-  if (!confirm('确定要删除这个标签吗？')) return
+  const confirmed = await confirmAction({
+    title: '删除这个标签？',
+    message: '删除后，该标签会从图片关联中移除。',
+    confirmText: '确认删除',
+    cancelText: '取消',
+    tone: 'danger',
+  })
+
+  if (!confirmed) return
 
   try {
     await tagsApi.delete(id)
     await loadTags()
+    notifySuccess('标签已删除')
   } catch (error: any) {
-    alert(error.response?.data?.error || '删除失败')
+    notifyError(error.response?.data?.error || '删除失败')
   }
 }
 </script>

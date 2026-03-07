@@ -30,6 +30,10 @@ type Image struct {
 	Tags             []Tag      `json:"tags,omitempty"`
 }
 
+type ImageListCursor struct {
+	ID int64 `json:"id"`
+}
+
 type Tag struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`

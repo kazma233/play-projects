@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path"
@@ -39,6 +42,16 @@ type SyncStartResult struct {
 	Started bool
 	Status  string
 }
+
+type ImageListResult struct {
+	Images     []*model.Image
+	Total      int
+	Limit      int
+	NextCursor string
+	HasMore    bool
+}
+
+var ErrInvalidImageCursor = errors.New("invalid image cursor")
 
 func NewImageService(db *sql.DB, storage storage.Storage, pathPrefix string) *ImageService {
 	return &ImageService{
@@ -317,18 +330,35 @@ func (s *ImageService) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *ImageService) GetList(page, limit int, tagID *int) ([]*model.Image, int, error) {
+func (s *ImageService) GetList(cursor string, limit int, tagID *int) (*ImageListResult, error) {
+	limit = normalizeImageListLimit(limit)
+
+	parsedCursor, err := decodeImageCursor(cursor)
+	if err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
-		return nil, 0, fmt.Errorf("开始事务失败: %w", err)
+		return nil, fmt.Errorf("开始事务失败: %w", err)
 	}
 	defer tx.Rollback()
 
 	imageRepo := repository.NewImageRepository(tx)
 
-	images, total, err := imageRepo.GetImages(page, limit, tagID)
+	images, err := imageRepo.GetImagesByCursor(parsedCursor, limit+1, tagID)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
+	}
+
+	total, err := imageRepo.CountImages(tagID)
+	if err != nil {
+		return nil, err
+	}
+
+	hasMore := len(images) > limit
+	if hasMore {
+		images = images[:limit]
 	}
 
 	// 填充完整URL
@@ -336,7 +366,21 @@ func (s *ImageService) GetList(page, limit int, tagID *int) ([]*model.Image, int
 		s.fillImageURLs(image)
 	}
 
-	return images, total, nil
+	nextCursor := ""
+	if hasMore && len(images) > 0 {
+		nextCursor, err = encodeImageCursor(images[len(images)-1])
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &ImageListResult{
+		Images:     images,
+		Total:      total,
+		Limit:      limit,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}, nil
 }
 
 func (s *ImageService) GetByID(id int64) (*model.Image, error) {
@@ -388,6 +432,53 @@ func intPtr(i int) *int {
 
 func int64Ptr(i int64) *int64 {
 	return &i
+}
+
+func normalizeImageListLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
+}
+
+func decodeImageCursor(cursor string) (*model.ImageListCursor, error) {
+	if cursor == "" {
+		return nil, nil
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidImageCursor, err)
+	}
+
+	parsedCursor := &model.ImageListCursor{}
+	if err := json.Unmarshal(decoded, parsedCursor); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidImageCursor, err)
+	}
+
+	if parsedCursor.ID <= 0 {
+		return nil, fmt.Errorf("%w: missing cursor id", ErrInvalidImageCursor)
+	}
+
+	return parsedCursor, nil
+}
+
+func encodeImageCursor(image *model.Image) (string, error) {
+	if image == nil {
+		return "", nil
+	}
+
+	payload, err := json.Marshal(model.ImageListCursor{
+		ID: image.ID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("编码图片分页游标失败: %w", err)
+	}
+
+	return base64.RawURLEncoding.EncodeToString(payload), nil
 }
 
 // fillImageURLs 填充图片的完整URL

@@ -1,14 +1,22 @@
 import { api } from "./client";
-import type { ApiResponse, Image, SyncStartResult } from "@/types";
+import type {
+  ApiResponse,
+  CursorPaginatedResponse,
+  Image,
+  SyncStartResult,
+} from "@/types";
 
 export const imagesApi = {
-  getList: (params: { page?: number; limit?: number; tag_id?: number }) =>
-    api.get<{ data: Image[]; total: number; page: number; limit: number }>(
+  getList: (
+    params: { cursor?: string; limit?: number; tag_id?: number },
+    signal?: AbortSignal,
+  ) =>
+    api.get<CursorPaginatedResponse<Image>>(
       "/images",
-      { params },
+      { params, signal },
     ),
 
-  getById: (id: number) => api.get<ApiResponse<Image>>(`/images/${id}`),
+  getById: (id: number) => api.get<Image>(`/images/${id}`),
 
   upload: (formData: FormData, onProgress?: (percent: number) => void) =>
     api.post<ApiResponse<{ data: Image[]; count: number }>>(

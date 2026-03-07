@@ -5,7 +5,7 @@
 ## 功能特性
 
 - 📸 **Git图床存储**: 基于 GitHub REST API，支持自定义路径
-- 🎨 **瀑布流展示**: 使用 Tailwind CSS 实现响应式布局
+- 🎨 **瀑布流展示**: 使用响应式多列瀑布流布局，支持稳定的滚动加载
 - 🖼️ **智能缩略图**: 自动生成 1080P 缩略图
 - 🏷️ **图片标签**: 支持为图片添加和管理标签
 - 📧 **邮箱验证码登录**: 使用 SMTP 发送验证码
@@ -25,7 +25,7 @@
 ### 前端
 - **框架**: Vue 3 + TypeScript + Vite
 - **UI**: Tailwind CSS v4
-- **瀑布流**: 响应式 Grid 布局
+- **瀑布流**: 响应式多列瀑布流布局
 - **状态管理**: Pinia
 - **HTTP**: Axios
 
@@ -178,7 +178,7 @@ log:
 
 ### 公开接口
 ```
-GET  /api/images              # 获取图片列表（分页）
+GET  /api/images              # 获取图片列表（按 ID 倒序的游标分页）
 GET  /api/images/:id          # 获取单张图片详情
 GET  /api/tags                # 获取所有标签
 GET  /api/tags/:id/images     # 按标签ID筛选图片
@@ -193,6 +193,20 @@ GET  /api/config              # 获取前端配置（home_auth 等）
 POST /api/auth/send-code      # 发送验证码
 POST /api/auth/verify         # 验证码登录
 ```
+
+`GET /api/images` 查询参数：
+- `limit`: 每次拉取数量，默认 `20`，最大 `100`
+- `cursor`: 下一页游标，首屏请求可省略（基于上一页最后一张图片的 `id`）
+- `tag_id`: 按标签筛选
+
+`GET /api/images` 返回字段：
+- `data`: 当前批次图片列表
+- `total`: 当前筛选条件下的总数
+- `limit`: 本次生效的分页大小
+- `has_more`: 是否还有下一页
+- `next_cursor`: 下一页游标，没有更多数据时为 `null`
+
+图片列表默认按 `id DESC` 返回，游标也基于 `id` 递减翻页。
 
 ### 管理接口（需JWT）
 ```

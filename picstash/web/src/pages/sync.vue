@@ -118,15 +118,9 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { syncApi } from '@/api/sync'
 import type { SyncLog, SyncFileLog, PaginatedResponse } from '@/types'
+import { useNotifications } from '@/utils/notification'
 
-const showToast = (message: string) => {
-  const toast = document.createElement('div')
-  toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#10B981;color:white;padding:8px 16px;border-radius:8px;font-size:14px;z-index:9999;'
-  toast.textContent = message
-  document.body.appendChild(toast)
-  setTimeout(() => toast.remove(), 2000)
-}
-
+const { notifyError } = useNotifications()
 const syncLogs = ref<SyncLog[]>([])
 const fileLogs = ref<SyncFileLog[]>([])
 const selectedLogId = ref<number | null>(null)
@@ -173,7 +167,7 @@ const loadLogs = async (loadMore = false) => {
     }
   } catch (error) {
     console.error('加载同步日志失败:', error)
-    showToast('加载失败')
+    notifyError('加载失败')
   } finally {
     loading.value = false
     loadingMore.value = false
@@ -197,7 +191,7 @@ const toggleFileDetails = async (logId: number) => {
     fileLogs.value = res.data.data || []
   } catch (error) {
     console.error('加载文件详情失败:', error)
-    showToast('加载文件详情失败')
+    notifyError('加载文件详情失败')
   } finally {
     fileLogsLoading.value = false
   }

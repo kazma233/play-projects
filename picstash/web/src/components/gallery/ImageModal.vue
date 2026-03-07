@@ -69,22 +69,28 @@
 </template>
 
 <script setup lang="ts">
+import axios from 'axios'
 import { nextTick, ref, watch } from 'vue'
 import type { Image } from '@/types'
 import { imagesApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import TagPicker from '@/components/tag/TagPicker.vue'
+import { useConfirm } from '@/utils/confirm'
+import { useNotifications } from '@/utils/notification'
 
 const props = defineProps<{
   show: boolean
   image: Image
   showDelete?: boolean
   onDeleted?: (id: number) => void
+  onTagsUpdated?: (image: Image) => void
 }>()
 
 const emit = defineEmits(['close'])
 
 const authStore = useAuthStore()
+const { confirmAction } = useConfirm()
+const { notifyError } = useNotifications()
 const deleting = ref(false)
 const selectedTagIds = ref<string[]>([])
 let previousImageId: number | null = null
@@ -114,27 +120,63 @@ const handleSaveTags = async (tagIds: string[]) => {
   const numericIds = tagIds.map(id => parseInt(id))
   try {
     await imagesApi.updateTags(props.image.id, numericIds)
+
+    try {
+      const res = await imagesApi.getById(props.image.id)
+      props.onTagsUpdated?.(res.data)
+    } catch (detailError) {
+      console.error('刷新图片详情失败:', detailError)
+    }
   } catch (error) {
     console.error('更新标签失败:', error)
     updateSelectedTags()
-    alert('更新标签失败')
+    notifyError('更新标签失败')
   }
 }
 
 const handleDelete = async () => {
-  if (!confirm('确定要删除这张图片吗？')) return
+  const confirmed = await confirmAction({
+    title: '删除这张图片？',
+    message: '删除后将无法恢复，图片及相关衍生文件会一起删除。',
+    confirmText: '确认删除',
+    cancelText: '取消',
+    tone: 'danger',
+  })
+
+  if (!confirmed) return
 
   deleting.value = true
   try {
-    await imagesApi.delete(props.image.id)
-    emit('close')
-    props.onDeleted?.(props.image.id)
+    const res = await imagesApi.delete(props.image.id)
+
+    if (res.data?.error) {
+      throw new Error(res.data.error)
+    }
+
+    try {
+      await imagesApi.getById(props.image.id)
+      throw new Error('删除未生效，请稍后重试')
+    } catch (verifyError) {
+      if (!(axios.isAxiosError(verifyError) && verifyError.response?.status === 404)) {
+        throw verifyError
+      }
+    }
   } catch (error) {
     console.error('删除失败:', error)
-    alert('删除失败')
+    if (axios.isAxiosError(error)) {
+      notifyError(error.response?.data?.error || '删除失败')
+    } else if (error instanceof Error) {
+      notifyError(error.message)
+    } else {
+      notifyError('删除失败')
+    }
+    return
   } finally {
     deleting.value = false
   }
+
+  props.onDeleted?.(props.image.id)
+  emit('close')
 }
 
 watch(() => props.image.id, () => {
