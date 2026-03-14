@@ -1,10 +1,14 @@
 mod types;
 mod utils;
+#[cfg(target_os = "windows")]
 mod windows;
+#[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "linux")]
 mod linux;
 
 pub use types::{Enhance, PortError, PortInfo, PortScanner};
+pub use types::KillTarget;
 
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
@@ -28,12 +32,15 @@ pub fn get_port_list() -> Result<Vec<PortInfo>, PortError> {
     ports.enhance()
 }
 
-pub async fn kill_process(port: u16, ports: &[PortInfo]) -> Result<String, PortError> {
+pub async fn kill_process(target: &KillTarget, ports: &[PortInfo]) -> Result<String, PortError> {
     let port_info = ports
         .iter()
-        .find(|p| p.port == port)
-        .ok_or(PortError::ProcessNotFound(port))?;
-    
+        .find(|port_info| target.matches(port_info))
+        .ok_or(PortError::ProcessNotFound {
+            port: target.port,
+            pid: target.pid,
+        })?;
+
     let pid = port_info.pid;
     if pid == 0 {
         return Err(PortError::ProcessKillFailed(pid));
@@ -48,7 +55,10 @@ pub async fn kill_process(port: u16, ports: &[PortInfo]) -> Result<String, PortE
         .ok_or(PortError::ProcessKillFailed(pid))?;
 
     if process.kill() {
-        Ok(format!("Successfully killed process {} on port {}", pid, port))
+        Ok(format!(
+            "Successfully killed process {} on {} {}",
+            pid, port_info.protocol, port_info.local_addr
+        ))
     } else {
         Err(PortError::ProcessKillFailed(pid))
     }

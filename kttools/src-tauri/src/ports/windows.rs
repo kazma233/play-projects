@@ -1,19 +1,21 @@
 use super::types::{PortError, PortInfo, PortScanner};
-use super::utils::run_command;
+use super::utils::{normalize_protocol_label, normalize_socket_addr, run_command};
 
 pub struct WindowsScanner;
 
 fn parse_port_from_addr(addr: &str) -> Option<u16> {
     if addr.starts_with('[') {
-        addr.rfind(']')
-            .and_then(|end| addr.get(end + 2..))?
-            .parse()
-            .ok()
-    } else {
-        addr.rfind(':')
-            .and_then(|pos| addr.get(pos + 1..))?
-            .parse()
-            .ok()
+        let end = addr.rfind(']')?;
+        return addr.get(end + 2..)?.parse().ok();
+    }
+
+    addr.rsplit_once(':')?.1.parse().ok()
+}
+
+fn normalize_windows_state(state: &str) -> String {
+    match state.to_ascii_uppercase().as_str() {
+        "LISTENING" => "LISTEN".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -22,52 +24,48 @@ impl PortScanner for WindowsScanner {
         let output = run_command("netstat", &["-ano"])?;
         let mut ports = Vec::new();
 
-        let mut started = false;
         for line in output.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
 
-            if !started && trimmed.starts_with("Proto") {
-                started = true;
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            let Some(protocol_part) = parts.first() else {
                 continue;
-            }
-
-            if !started {
-                continue;
-            }
-
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 5 {
-                continue;
-            }
-
-            let protocol = parts[0].to_uppercase();
-            if !protocol.starts_with("TCP") && !protocol.starts_with("UDP") {
-                continue;
-            }
-
-            let local_addr = parts[1];
-            let port = match parse_port_from_addr(local_addr) {
-                Some(p) => p,
-                None => continue,
             };
 
-            let (status, status_idx) = if protocol.starts_with("TCP") {
-                if parts.len() >= 4 {
-                    (parts[3].to_string(), 4)
-                } else {
+            let protocol = normalize_protocol_label(protocol_part);
+            if protocol != "TCP" && protocol != "UDP" {
+                continue;
+            }
+
+            let (local_addr, remote_addr, status, pid) = if protocol == "TCP" {
+                if parts.len() < 5 {
                     continue;
                 }
+
+                (
+                    normalize_socket_addr(parts[1]),
+                    normalize_socket_addr(parts[2]),
+                    normalize_windows_state(parts[3]),
+                    parts[4].parse::<u32>().unwrap_or(0),
+                )
             } else {
-                ("-".to_string(), 3)
+                if parts.len() < 4 {
+                    continue;
+                }
+
+                (
+                    normalize_socket_addr(parts[1]),
+                    normalize_socket_addr(parts[2]),
+                    String::new(),
+                    parts[3].parse::<u32>().unwrap_or(0),
+                )
             };
 
-            let pid = if parts.len() > status_idx {
-                parts[status_idx].parse::<u32>().unwrap_or(0)
-            } else {
-                0
+            let Some(port) = parse_port_from_addr(parts[1]) else {
+                continue;
             };
 
             ports.push(PortInfo {
@@ -75,14 +73,10 @@ impl PortScanner for WindowsScanner {
                 protocol,
                 pid,
                 process_name: String::new(),
-                status: if status == "LISTENING" {
-                    "LISTEN".to_string()
-                } else {
-                    status
-                },
+                status,
                 process_name_unknown: false,
-                local_addr: String::new(),
-                remote_addr: String::new(),
+                local_addr,
+                remote_addr,
                 user: String::new(),
             });
         }

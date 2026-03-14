@@ -42,6 +42,10 @@ npm run tauri icon /path/to/app-icon.png
 npm run tauri build
 ```
 
+``` sh
+npm run tauri build -- --bundles rpm
+```
+
 ## 项目结构
 
 ```

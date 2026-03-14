@@ -1,81 +1,120 @@
 <template>
-  <div class="tool-container">
-    <n-flex justify="space-between" align="center" style="margin-bottom: 16px;">
-      <n-text class="title">图片压缩转换</n-text>
-      <n-flex align="center">
-        <n-button type="info" @click="addImages">+ 添加图片</n-button>
-        <n-button :disabled="images.length === 0 || batchProcessing" type="error" @click="clearAll">
-          清空
-        </n-button>
-        <n-divider vertical></n-divider>
-        <n-button :disabled="!processedData" type="primary" @click="saveImage" :loading="saving">
-          保存单张
-        </n-button>
-        <n-button :disabled="images.length === 0 || batchProcessing" type="primary" @click="batchProcess"
-          :loading="batchProcessing">
-          批量保存 {{ batchProcessing ? `(${batchCompleted}/${batchTotal})` : '' }}
-        </n-button>
+  <div class="page-view image-page">
+    <n-card class="tool-surface image-toolbar-card" :bordered="false">
+      <n-flex justify="space-between" align="center" class="image-toolbar" wrap>
+        <div class="tool-panel__title">
+          <strong>图片压缩转换</strong>
+          <span class="tool-panel__meta">批量处理图片并对比压缩效果，适合静态资源整理和交付前清洗。</span>
+        </div>
+
+        <n-flex align="center" class="tool-inline-actions image-toolbar-actions">
+          <n-button class="image-toolbar-button" type="info" @click="addImages">+ 添加图片</n-button>
+          <n-button class="image-toolbar-button" :disabled="images.length === 0 || batchProcessing" type="error" @click="clearAll">
+            清空
+          </n-button>
+          <n-divider class="image-toolbar-divider" vertical></n-divider>
+          <n-button class="image-toolbar-button" :disabled="!processedData" type="primary" @click="saveImage" :loading="saving">
+            保存单张
+          </n-button>
+          <n-button class="image-toolbar-button" :disabled="images.length === 0 || batchProcessing" type="primary" @click="batchProcess"
+            :loading="batchProcessing">
+            批量保存 {{ batchProcessing ? `(${batchCompleted}/${batchTotal})` : '' }}
+          </n-button>
+        </n-flex>
       </n-flex>
-    </n-flex>
+    </n-card>
 
     <div class="main-layout">
       <!-- Sidebar -->
-      <n-card class="sidebar" :bordered="false"
-        content-style="padding: 5px; display: flex; flex-direction: column; height: 100%;">
-        <n-scrollbar v-if="images.length > 0" style="flex: 1; min-height: 0;">
-          <n-list hoverable clickable>
-            <n-list-item v-for="(img, idx) in images" :key="idx" size="small" :class="{ active: selectedIndex === idx }"
+        <n-card
+          class="sidebar tool-surface"
+          :bordered="false"
+          content-class="image-card-content image-card-content--tight image-card-content--column image-card-content--full"
+        >
+        <n-scrollbar v-if="images.length > 0" class="image-sidebar-scroll">
+          <n-list hoverable clickable class="image-list">
+            <n-list-item v-for="(img, idx) in images" :key="idx" size="small" class="image-list-item" :class="{ active: selectedIndex === idx }"
               @click="selectImage(idx)">
               {{ img.name }}
             </n-list-item>
           </n-list>
         </n-scrollbar>
-        <n-empty v-else description="点击右上角按钮添加图片" style="flex: 1;" />
+        <n-empty v-else description="点击右上角按钮添加图片" class="image-empty-state" />
       </n-card>
 
       <!-- Main Content -->
       <div class="main-content">
         <!-- Config Panel -->
-        <n-card class="config-panel" :bordered="false" content-style="padding: 12px 16px;">
-          <n-flex wrap :gap="24" align="center">
-            <n-flex align="center" :gap="8">
-              <n-text depth="3" class="label">格式</n-text>
-              <n-button-group>
-                <n-button :type="outputFormat === 'Jpg' ? 'primary' : 'default'" @click="outputFormat = 'Jpg'"
+        <n-card class="config-panel tool-surface" :bordered="false" content-class="image-card-content image-card-content--config">
+            <n-flex wrap :gap="24" align="center">
+              <n-flex align="center" :gap="8">
+                <n-text depth="3" class="label">格式</n-text>
+              <n-button-group class="image-button-group">
+                <n-button class="image-group-button" :type="outputFormat === 'Jpg' ? 'primary' : 'default'" @click="outputFormat = 'Jpg'"
                   size="small">JPG</n-button>
-                <n-button :type="outputFormat === 'Png' ? 'primary' : 'default'" @click="outputFormat = 'Png'"
+                <n-button class="image-group-button" :type="outputFormat === 'Png' ? 'primary' : 'default'" @click="outputFormat = 'Png'"
                   size="small">PNG</n-button>
-                <n-button :type="outputFormat === 'WebP' ? 'primary' : 'default'" @click="outputFormat = 'WebP'"
+                <n-button class="image-group-button" :type="outputFormat === 'WebP' ? 'primary' : 'default'" @click="outputFormat = 'WebP'"
                   size="small">WebP</n-button>
               </n-button-group>
             </n-flex>
 
-            <n-flex v-if="outputFormat !== 'WebP'" align="center" :gap="8" style="min-width: 150px;">
-              <n-text depth="3" class="label">质量 {{ quality }}%</n-text>
-              <n-slider v-model:value="quality" :min="1" :max="100" :step="1" style="width: 100px;" />
+            <n-flex v-if="outputFormat === 'WebP'" align="center" :gap="8">
+              <n-text depth="3" class="label">模式</n-text>
+              <n-button-group class="image-button-group">
+                <n-button class="image-group-button" :type="webpLossless ? 'default' : 'primary'" @click="webpLossless = false" size="small">有损</n-button>
+                <n-button class="image-group-button" :type="webpLossless ? 'primary' : 'default'" @click="webpLossless = true" size="small">无损</n-button>
+              </n-button-group>
             </n-flex>
-            <n-text v-else depth="3" class="label">WebP 无损编码</n-text>
 
-            <n-flex align="center" :gap="8" style="min-width: 150px;">
+            <n-flex v-if="showQualitySlider" align="center" :gap="8" class="image-control image-control--slider">
+              <n-text depth="3" class="label">{{ qualityLabel }} {{ quality }}%</n-text>
+              <n-slider v-model:value="quality" :min="1" :max="100" :step="1" class="image-control__slider" />
+            </n-flex>
+
+            <n-flex v-if="showQualitySlider" align="center" :gap="8">
+              <n-text depth="3" class="label">预设</n-text>
+              <n-button-group class="image-button-group">
+                <n-button
+                  v-for="preset in qualityPresets"
+                  :key="preset.label"
+                  class="image-group-button"
+                  :type="quality === preset.value ? 'primary' : 'default'"
+                  @click="applyQualityPreset(preset.value)"
+                  size="small"
+                >
+                  {{ preset.label }}
+                </n-button>
+              </n-button-group>
+            </n-flex>
+
+            <n-flex align="center" :gap="8" class="image-control image-control--slider">
               <n-text depth="3" class="label">缩放 {{ scale }}%</n-text>
               <n-slider v-model:value="scale" :min="1" :max="100" :step="1" :format-tooltip="getScaledSize"
-                style="width: 100px;" />
+                class="image-control__slider" />
             </n-flex>
           </n-flex>
-          <n-text depth="3" style="font-size: 12px; margin-top: 8px; display: block;">* 输出图片不含元数据</n-text>
+          <n-text depth="3" class="image-format-hint">{{ formatHint }}</n-text>
         </n-card>
 
         <!-- Preview Area -->
-        <n-card v-if="selectedImage" class="preview-area" :bordered="false"
-          content-style="padding: 5px; display: flex; flex-direction: column;">
+        <n-card
+          v-if="selectedImage"
+          class="preview-area tool-surface"
+          :bordered="false"
+          content-class="image-card-content image-card-content--tight image-card-content--column"
+        >
           <n-flex align="center">
-            <n-text strong style="font-size: 15px;">{{ selectedImage.name }}</n-text>
+            <n-text strong class="image-preview-title">{{ selectedImage.name }}</n-text>
           </n-flex>
 
-          <n-split direction="horizontal" :default-size="0.5">
+          <n-split class="image-compare-split" :direction="stackedPreview ? 'vertical' : 'horizontal'" :default-size="0.5">
             <template #1>
-              <n-card class="image-panel" :bordered="false"
-                content-style="padding: 5px; display: flex; flex-direction: column; height: 100%;">
+              <n-card
+                class="image-panel tool-surface"
+                :bordered="false"
+                content-class="image-card-content image-card-content--tight image-card-content--column image-card-content--full"
+              >
                 <n-flex justify="space-between" align="center" class="panel-header">
                   <n-text depth="3">原图</n-text>
                   <n-text depth="3">{{ selectedImage.width }} x {{ selectedImage.height }}</n-text>
@@ -89,11 +128,14 @@
               </n-card>
             </template>
             <template #2>
-              <n-card class="image-panel" :bordered="false"
-                content-style="padding: 5px; display: flex; flex-direction: column; height: 100%;">
+              <n-card
+                class="image-panel tool-surface"
+                :bordered="false"
+                content-class="image-card-content image-card-content--tight image-card-content--column image-card-content--full"
+              >
                 <n-flex justify="space-between" align="center" class="panel-header">
                   <n-text depth="3">处理后</n-text>
-                  <n-text depth="3" style="font-size: 13px;">{{ compressionInfo }}</n-text>
+                  <n-text depth="3" class="image-compression-meta">{{ compressionInfo }}</n-text>
                 </n-flex>
                 <div class="image-viewer">
                   <n-image v-if="processedImageUrl" :src="processedImageUrl" alt="处理后" object-fit="contain" width="100%"
@@ -112,7 +154,7 @@
           </n-split>
         </n-card>
 
-        <n-card v-else class="empty-preview" :bordered="false">
+        <n-card v-else class="empty-preview tool-surface" :bordered="false">
           <n-empty description="从左侧列表中选择一张图片" />
         </n-card>
       </div>
@@ -121,7 +163,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { NButton, NButtonGroup, NSlider, NSpin, NEmpty, NText, NFlex, NSpace, NScrollbar, NEllipsis, NImage, NCard, NSplit, useMessage, useDialog } from 'naive-ui'
 import { invoke } from "@tauri-apps/api/core"
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -133,8 +175,20 @@ const dialog = useDialog()
 const images = ref([])
 const selectedIndex = ref(null)
 const outputFormat = ref('Jpg')
-const quality = ref(85)
+const qualityByFormat = reactive({
+  Jpg: 80,
+  Png: 65,
+  WebP: 80
+})
 const scale = ref(100)
+const webpLossless = ref(false)
+
+const quality = computed({
+  get: () => qualityByFormat[outputFormat.value],
+  set: (value) => {
+    qualityByFormat[outputFormat.value] = value
+  }
+})
 
 const getScaledSize = (value) => {
   if (!selectedImage.value?.width) return value + '%'
@@ -152,6 +206,14 @@ const originalImageUrl = ref('')
 const processedData = ref(null)
 const processedDimensions = ref(null)
 const processedImageUrl = ref('')
+let previewRequestId = 0
+const viewportWidth = ref(0)
+
+const stackedPreview = computed(() => viewportWidth.value <= 1180)
+
+const syncViewport = () => {
+  viewportWidth.value = window.innerWidth
+}
 
 const selectedImage = computed(() => {
   if (selectedIndex.value !== null && selectedIndex.value < images.value.length) {
@@ -170,6 +232,100 @@ const compressionInfo = computed(() => {
   return dims + Math.round(originalKb) + ' KB → ' + Math.round(processedKb) + ' KB (↓' + ratio + '%)'
 })
 
+const showQualitySlider = computed(() => outputFormat.value !== 'WebP' || !webpLossless.value)
+
+const qualityPresets = computed(() => {
+  if (outputFormat.value === 'Png') {
+    return [
+      { label: '快速', value: 25 },
+      { label: '平衡', value: 65 },
+      { label: '高压缩', value: 95 }
+    ]
+  }
+
+  return [
+    { label: '快速', value: 55 },
+    { label: '平衡', value: 80 },
+    { label: '高质量', value: 92 }
+  ]
+})
+
+const qualityLabel = computed(() => outputFormat.value === 'Png' ? '压缩强度' : '质量')
+
+const formatHint = computed(() => {
+  if (outputFormat.value === 'Png') {
+    return '* PNG 为无损压缩，数值越高通常越慢但体积更小，输出图片不含元数据'
+  }
+
+  if (outputFormat.value === 'WebP') {
+    return webpLossless.value
+      ? '* WebP 当前使用无损编码，适合保真导出，输出图片不含元数据'
+      : '* WebP 当前使用有损编码，质量越低体积越小、速度越快，输出图片不含元数据'
+  }
+
+  return '* JPG 质量越低体积越小、速度越快，输出图片不含元数据'
+})
+
+const revokeObjectUrl = (url) => {
+  if (url) {
+    URL.revokeObjectURL(url)
+  }
+}
+
+const applyQualityPreset = (value) => {
+  quality.value = value
+}
+
+const revokeImagePreview = (img) => {
+  if (!img?.previewUrl) return
+  revokeObjectUrl(img.previewUrl)
+  img.previewUrl = ''
+  img.previewLoaded = false
+}
+
+const resetProcessedState = () => {
+  processedData.value = null
+  processedDimensions.value = null
+  revokeObjectUrl(processedImageUrl.value)
+  processedImageUrl.value = ''
+}
+
+const createImageEntry = (file) => {
+  const fileName = file.split(/[/\\]/).pop() || file
+
+  return {
+    path: file,
+    name: fileName,
+    size: 0,
+    width: 0,
+    height: 0,
+    processed: false,
+    error: null,
+    outputPath: '',
+    previewLoaded: false,
+    previewUrl: ''
+  }
+}
+
+const batchConcurrency = () => Math.max(1, Math.min(images.value.length, globalThis.navigator?.hardwareConcurrency || 4, 6))
+
+const clearCachedImages = () => {
+  for (const img of images.value) {
+    revokeImagePreview(img)
+  }
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncViewport)
+  clearCachedImages()
+  resetProcessedState()
+})
+
+onMounted(() => {
+  syncViewport()
+  window.addEventListener('resize', syncViewport)
+})
+
 const addImages = async () => {
   try {
     const files = await open({
@@ -179,16 +335,7 @@ const addImages = async () => {
 
     if (files && files.length > 0) {
       for (const file of files) {
-        const fileName = file.split(/[/\\]/).pop() || file
-        images.value.push({
-          path: file,
-          name: fileName,
-          size: 0,
-          width: 0,
-          height: 0,
-          processed: false,
-          error: null
-        })
+        images.value.push(createImageEntry(file))
       }
     }
   } catch (e) {
@@ -198,33 +345,44 @@ const addImages = async () => {
 
 const selectImage = async (idx) => {
   selectedIndex.value = idx
-  processedData.value = null
-  processedDimensions.value = null
-  processedImageUrl.value = ''
+  const currentRequestId = ++previewRequestId
+  resetProcessedState()
   originalImageUrl.value = ''
 
   const img = images.value[idx]
-  if (img && img.path) {
-    previewLoading.value = true
-    try {
-      const result = await invoke('load_original_image', {
-        path: img.path
-      })
+  if (!img || !img.path) return
 
-      images.value[idx].width = result.width
-      images.value[idx].height = result.height
-      images.value[idx].size = result.original_size
+  if (img.previewLoaded && img.previewUrl) {
+    previewLoading.value = false
+    originalImageUrl.value = img.previewUrl
+    return
+  }
 
-      // 直接显示原图
-      const ext = img.name.split('.').pop()?.toLowerCase()
-      const mimeType = ext === 'png' ? 'image/png' :
-        ext === 'webp' ? 'image/webp' :
-          ext === 'bmp' ? 'image/bmp' : 'image/jpeg'
-      const blob = new Blob([new Uint8Array(result.image_data)], { type: mimeType })
-      originalImageUrl.value = URL.createObjectURL(blob)
-    } catch (e) {
+  previewLoading.value = true
+
+  try {
+    const result = await invoke('load_original_image', {
+      path: img.path
+    })
+
+    images.value[idx].width = result.width
+    images.value[idx].height = result.height
+    images.value[idx].size = result.original_size
+
+    revokeImagePreview(images.value[idx])
+    const blob = new Blob([new Uint8Array(result.preview_data)], { type: result.preview_mime_type })
+    images.value[idx].previewUrl = URL.createObjectURL(blob)
+    images.value[idx].previewLoaded = true
+
+    if (currentRequestId === previewRequestId && selectedIndex.value === idx) {
+      originalImageUrl.value = images.value[idx].previewUrl
+    }
+  } catch (e) {
+    if (currentRequestId === previewRequestId && selectedIndex.value === idx) {
       message.error('加载预览失败: ' + e)
-    } finally {
+    }
+  } finally {
+    if (currentRequestId === previewRequestId && selectedIndex.value === idx) {
       previewLoading.value = false
     }
   }
@@ -234,14 +392,15 @@ const processImage = async () => {
   if (!selectedImage.value) return
 
   processing.value = true
-  processedData.value = null
+  resetProcessedState()
 
   try {
     const result = await invoke('process_image', {
       path: selectedImage.value.path,
       format: outputFormat.value,
       quality: quality.value,
-      scale: scale.value
+      scale: scale.value,
+      webpLossless: webpLossless.value
     })
 
     processedData.value = new Uint8Array(result.data)
@@ -253,6 +412,7 @@ const processImage = async () => {
     processedImageUrl.value = URL.createObjectURL(blob)
 
     images.value[selectedIndex.value].processed = true
+    images.value[selectedIndex.value].error = null
     message.success('处理完成')
   } catch (e) {
     message.error('处理失败: ' + e)
@@ -299,25 +459,40 @@ const batchProcess = async () => {
     batchProcessing.value = true
     batchCompleted.value = 0
     batchTotal.value = images.value.length
+    const concurrency = batchConcurrency()
+    let nextIndex = 0
 
-    for (let i = 0; i < images.value.length; i++) {
-      const img = images.value[i]
-      try {
-        const result = await invoke('process_and_save_image', {
-          inputPath: img.path,
-          outputDir: outputDir,
-          format: outputFormat.value,
-          quality: quality.value,
-          scale: scale.value
-        })
+    const worker = async () => {
+      while (true) {
+        const currentIndex = nextIndex++
+        if (currentIndex >= images.value.length) {
+          return
+        }
 
-        images.value[i].processed = true
-        images.value[i].outputPath = result[0]
-      } catch (e) {
-        images.value[i].error = e
+        const img = images.value[currentIndex]
+
+        try {
+          const result = await invoke('process_and_save_image', {
+            inputPath: img.path,
+            outputDir: outputDir,
+            format: outputFormat.value,
+            quality: quality.value,
+            scale: scale.value,
+            webpLossless: webpLossless.value
+          })
+
+          images.value[currentIndex].processed = true
+          images.value[currentIndex].error = null
+          images.value[currentIndex].outputPath = result.output_path
+        } catch (e) {
+          images.value[currentIndex].error = e
+        } finally {
+          batchCompleted.value++
+        }
       }
-      batchCompleted.value++
     }
+
+    await Promise.all(Array.from({ length: concurrency }, () => worker()))
 
     message.success('批量处理完成')
   } catch (e) {
@@ -334,22 +509,77 @@ const clearAll = () => {
     positiveText: '确定',
     negativeText: '取消',
     onPositiveClick: () => {
+      clearCachedImages()
+      previewRequestId++
+      previewLoading.value = false
       images.value = []
       selectedIndex.value = null
       originalImageUrl.value = ''
-      processedImageUrl.value = ''
-      processedData.value = null
+      resetProcessedState()
     }
   })
 }
 </script>
 
 <style scoped>
+:global(.image-card-content) {
+  min-height: 0;
+}
+
+:global(.image-card-content--tight) {
+  padding: 5px;
+}
+
+:global(.image-card-content--column) {
+  display: flex;
+  flex-direction: column;
+}
+
+:global(.image-card-content--full) {
+  height: 100%;
+}
+
+:global(.image-card-content--config) {
+  padding: 16px 18px;
+}
+
 /* ========== 容器布局 ========== */
 .tool-container {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.image-page {
+  min-height: 0;
+  overflow: auto;
+}
+
+.image-toolbar-card {
+  flex-shrink: 0;
+}
+
+.image-toolbar {
+  gap: 16px;
+}
+
+.image-toolbar-actions {
+  align-items: center;
+}
+
+.image-control {
+  flex: 1 1 min(100%, 12rem);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.image-control--slider {
+  align-items: center;
+}
+
+.image-control__slider {
+  flex: 1 1 min(100%, 7rem);
+  min-width: 0;
 }
 
 .title {
@@ -362,14 +592,42 @@ const clearAll = () => {
   display: flex;
   gap: 12px;
   min-height: 0;
+  align-items: stretch;
+  min-block-size: clamp(26rem, 62vh, 40rem);
 }
 
 /* ========== 侧边栏样式 ========== */
 .sidebar {
-  width: 280px;
+  width: clamp(15rem, 24vw, 17.5rem);
+  flex: 0 0 clamp(15rem, 24vw, 17.5rem);
+  max-width: 100%;
   display: flex;
   flex-direction: column;
+  min-height: 100%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(243, 210, 193, 0.24));
+}
+
+.image-sidebar-scroll,
+.image-empty-state {
+  flex: 1;
   min-height: 0;
+}
+
+.image-list-item {
+  border-radius: 16px;
+  margin: 4px 6px;
+  transition: background 180ms ease, transform 180ms ease;
+}
+
+.image-list-item:hover {
+  background: rgba(139, 211, 221, 0.16);
+  transform: translateX(2px);
+}
+
+.image-list-item.active {
+  background: rgba(245, 130, 174, 0.14);
+  color: var(--text-strong);
+  font-weight: 700;
 }
 
 /* ========== 主内容区域 ========== */
@@ -379,15 +637,32 @@ const clearAll = () => {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  min-height: 100%;
 }
 
 .config-panel {
   flex-shrink: 0;
 }
 
+.image-button-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.image-group-button {
+  min-width: clamp(3rem, 7vw, 3.625rem);
+}
+
 .label {
   font-size: 13px;
   white-space: nowrap;
+}
+
+.image-format-hint {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
 }
 
 /* ========== 图片预览区域 ========== */
@@ -397,6 +672,16 @@ const clearAll = () => {
   flex-direction: column;
   min-height: 0;
   height: 100%;
+  min-block-size: clamp(16rem, 38vh, 26rem);
+}
+
+.image-compare-split {
+  flex: 1;
+  min-height: clamp(20rem, 52vh, 34rem);
+}
+
+.image-preview-title {
+  font-size: clamp(0.95rem, 2.2vw, 1rem);
 }
 
 /* ========== 图片面板 ========== */
@@ -413,6 +698,11 @@ const clearAll = () => {
   align-items: center;
   margin-bottom: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.image-compression-meta {
+  font-size: clamp(0.75rem, 1.8vw, 0.8125rem);
 }
 
 /* ========== 图片查看器 ========== */
@@ -422,8 +712,9 @@ const clearAll = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fafafa;
-  border-radius: 4px;
+  padding: clamp(0.75rem, 1.6vw, 1rem);
+  background: linear-gradient(145deg, rgba(243, 210, 193, 0.22), rgba(255, 255, 255, 0.82));
+  border-radius: 18px;
 }
 
 /* ========== 空状态 ========== */
@@ -432,5 +723,50 @@ const clearAll = () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-block-size: clamp(16rem, 38vh, 26rem);
+}
+
+@media (max-width: 1080px) {
+  .main-layout {
+    flex-direction: column;
+    min-block-size: 0;
+  }
+
+  .sidebar {
+    width: 100%;
+    flex-basis: auto;
+    min-height: 0;
+    max-height: min(32vh, 16rem);
+  }
+
+  .main-content {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .image-toolbar-actions {
+    width: 100%;
+  }
+
+  .image-toolbar-button {
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+
+  .image-toolbar-divider {
+    display: none;
+  }
+
+  .image-button-group {
+    width: 100%;
+  }
+
+  .image-control--slider {
+    align-items: stretch;
+  }
+
+  .image-control__slider {
+    flex-basis: 100%;
+  }
 }
 </style>

@@ -1,79 +1,103 @@
 <template>
-  <n-card size="small" style="height: 100%;">
-    <n-split direction="vertical" :default-size="0.5" style="height: calc(100vh - 280px); min-height: 400px;">
-      <template #1>
-        <n-flex vertical style="height: 100%; padding: 8px;">
-          <n-flex justify="space-between" align="center">
-            <n-text strong>原始值</n-text>
-            <n-checkbox v-model:checked="base64Args.urlMode">URL 安全模式</n-checkbox>
-          </n-flex>
-          <n-input
-            v-model:value="base64Args.encode"
-            type="textarea"
-            placeholder="输入要编码的内容..."
-            @update:value="encode"
-            style="flex: 1;"
-          />
-        </n-flex>
-      </template>
-      
-      <template #2>
-        <n-flex vertical style="height: 100%; padding: 8px;">
-          <n-flex justify="space-between" align="center">
-            <n-text strong>Base64 编码值</n-text>
-            <n-button text type="primary" @click="swap">⇅ 交换</n-button>
-          </n-flex>
-          <n-input
-            v-model:value="base64Args.decode"
-            type="textarea"
-            placeholder="输入要解码的内容..."
-            @update:value="decode"
-            style="flex: 1;"
-          />
-        </n-flex>
-      </template>
-    </n-split>
-  </n-card>
+  <div class="page-view">
+    <n-card class="tool-surface tool-surface--fill" size="small" :bordered="false">
+      <n-split class="tool-split tool-split-frame" direction="vertical" :default-size="0.52">
+        <template #1>
+          <div class="tool-panel">
+            <div class="tool-panel__header">
+              <div class="tool-panel__title">
+                <strong>原始值</strong>
+                <span class="tool-panel__meta">输入后自动生成 Base64 结果，适合粘贴请求体、token 或签名原文。</span>
+              </div>
+              <n-checkbox v-model:checked="base64Args.urlMode">URL 安全模式</n-checkbox>
+            </div>
+
+            <n-input
+              v-model:value="base64Args.encode"
+              class="tool-code-input tool-fill-area"
+              type="textarea"
+              placeholder="输入要编码的内容..."
+              @update:value="encode"
+            />
+          </div>
+        </template>
+
+        <template #2>
+          <div class="tool-panel tool-panel--muted">
+            <div class="tool-panel__header">
+              <div class="tool-panel__title">
+                <strong>Base64 编码值</strong>
+                <span class="tool-panel__meta">支持直接反向编辑和双向校验。</span>
+              </div>
+              <n-button ghost type="primary" @click="swap">⇅ 交换内容</n-button>
+            </div>
+
+            <n-input
+              v-model:value="base64Args.decode"
+              class="tool-code-input tool-fill-area"
+              type="textarea"
+              placeholder="输入要解码的内容..."
+              @update:value="decode"
+            />
+          </div>
+        </template>
+      </n-split>
+    </n-card>
+  </div>
 </template>
 
 <script setup>
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { ref, watch } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { useMessage } from 'naive-ui'
 
 const message = useMessage()
 
 const base64Args = ref({
-  encode: "",
-  decode: "",
+  encode: '',
+  decode: '',
   urlMode: false
-});
+})
 
 const encode = async (input) => {
-  if (!input) { base64Args.value.decode = ""; return; }
+  if (!input) {
+    base64Args.value.decode = ''
+    return
+  }
+
   try {
-    base64Args.value.decode = await invoke("base64_encode", { input, urlMode: base64Args.value.urlMode });
-  } catch { message.error("编码失败") }
+    base64Args.value.decode = await invoke('base64_encode', {
+      input,
+      urlMode: base64Args.value.urlMode
+    })
+  } catch {
+    message.error('编码失败')
+  }
 }
 
 const decode = async (input) => {
-  if (!input) { base64Args.value.encode = ""; return; }
+  if (!input) {
+    base64Args.value.encode = ''
+    return
+  }
+
   try {
-    base64Args.value.encode = await invoke("base64_decode", { input });
-  } catch { message.error("解码失败") }
+    base64Args.value.encode = await invoke('base64_decode', { input })
+  } catch {
+    message.error('解码失败')
+  }
 }
 
 const swap = () => {
-  const temp = base64Args.value.encode;
-  base64Args.value.encode = base64Args.value.decode;
-  base64Args.value.decode = temp;
+  const temp = base64Args.value.encode
+  base64Args.value.encode = base64Args.value.decode
+  base64Args.value.decode = temp
 }
-</script>
 
-<style scoped>
-:deep(.n-input textarea) {
-  font-family: 'Fira Code', 'Consolas', monospace;
-  font-size: 14px;
-  line-height: 1.6;
-}
-</style>
+watch(
+  () => base64Args.value.urlMode,
+  () => {
+    encode(base64Args.value.encode)
+  }
+)
+</script>

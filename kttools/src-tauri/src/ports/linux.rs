@@ -1,123 +1,132 @@
 use super::types::{PortError, PortInfo, PortScanner};
-use super::utils::run_command;
+use super::utils::{
+    format_socket_addr, lookup_username_by_uid, normalize_protocol_label, normalize_socket_addr,
+    run_command,
+};
 use std::collections::HashMap;
-use std::process::Command;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 pub struct LinuxScanner;
 
-fn parse_port_from_addr(addr: &str) -> Option<u16> {
-    parse_decimal_port(addr)
-}
+type UserCache = HashMap<u32, String>;
+type SocketKey = (String, String, String);
 
-fn parse_decimal_port(addr: &str) -> Option<u16> {
-    if addr.starts_with('[') {
-        if let Some(bracket_end) = addr.find("]:") {
-            let port_str = &addr[bracket_end + 2..];
-            return port_str.parse().ok();
-        }
+fn decode_hex_bytes(hex: &str) -> Option<Vec<u8>> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
     }
-    if let Some(colon_pos) = addr.rfind(':') {
-        let port_str = &addr[colon_pos + 1..];
-        port_str.parse().ok()
-    } else {
-        None
-    }
+
+    (0..hex.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).ok())
+        .collect()
 }
 
 fn hex_to_ip(hex: &str) -> Option<String> {
-    let parts: Vec<u8> = (0..hex.len())
-        .step_by(2)
-        .filter_map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
-        .collect();
-
-    if parts.len() == 4 {
-        Some(format!(
-            "{}.{}.{}.{}",
-            parts[0], parts[1], parts[2], parts[3]
-        ))
-    } else if parts.len() == 16 {
-        let mut result = String::new();
-        for (i, chunk) in parts.chunks(16).enumerate() {
-            if i > 0 {
-                result.push(':');
-            }
-            for (j, byte) in chunk.chunks(2).enumerate() {
-                if j > 0 || i > 0 {
-                    result.push(':');
-                }
-                result.push_str(&format!("{:x}{:x}", byte[0], byte[1]));
-            }
+    match hex.len() {
+        8 => {
+            let bytes = decode_hex_bytes(hex)?;
+            let octets = [
+                *bytes.get(3)?,
+                *bytes.get(2)?,
+                *bytes.get(1)?,
+                *bytes.get(0)?,
+            ];
+            Some(Ipv4Addr::from(octets).to_string())
         }
-        Some(result)
-    } else {
-        None
+        32 => {
+            let bytes = decode_hex_bytes(hex)?;
+            if bytes.len() != 16 {
+                return None;
+            }
+
+            let mut normalized = [0_u8; 16];
+            for (index, chunk) in bytes.chunks_exact(4).enumerate() {
+                let start = index * 4;
+                normalized[start] = chunk[3];
+                normalized[start + 1] = chunk[2];
+                normalized[start + 2] = chunk[1];
+                normalized[start + 3] = chunk[0];
+            }
+
+            Some(Ipv6Addr::from(normalized).to_string())
+        }
+        _ => None,
     }
 }
 
 fn parse_local_remote_addr(local: &str, remote: &str) -> (String, String) {
-    let local_parsed = parse_hex_addr(local);
-    let remote_parsed = parse_hex_addr(remote);
-    (local_parsed, remote_parsed)
+    (parse_hex_addr(local), parse_hex_addr(remote))
 }
 
 fn parse_hex_addr(addr: &str) -> String {
-    if let Some(colon_pos) = addr.find(':') {
-        let ip_hex = &addr[..colon_pos];
-        let port_hex = &addr[colon_pos + 1..];
+    let Some((ip_hex, port_hex)) = addr.split_once(':') else {
+        return addr.to_string();
+    };
 
-        if let (Some(ip), Ok(port)) = (hex_to_ip(ip_hex), u16::from_str_radix(port_hex, 16)) {
-            return format!("{}:{}", ip, port);
-        }
-    }
-    addr.to_string()
+    let Some(ip) = hex_to_ip(ip_hex) else {
+        return addr.to_string();
+    };
+
+    let Ok(port) = u16::from_str_radix(port_hex, 16) else {
+        return addr.to_string();
+    };
+
+    format_socket_addr(&ip, port)
 }
 
-fn get_username_from_uid(uid: u32) -> String {
-    if let Ok(output) = Command::new("id").arg("-nu").arg(uid.to_string()).output() {
-        if output.status.success() {
-            return String::from_utf8_lossy(&output.stdout).trim().to_string();
-        }
+fn get_username_from_uid(uid: u32, cache: &mut UserCache) -> String {
+    if let Some(username) = cache.get(&uid) {
+        return username.clone();
     }
-    if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
-        for line in passwd.lines() {
+
+    let username = lookup_username_by_uid(uid).or_else(|| {
+        let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+        passwd.lines().find_map(|line| {
             let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() >= 3 && parts[2].parse::<u32>().unwrap_or(0) == uid {
-                return parts[0].to_string();
+            if parts.len() >= 3 && parts[2].parse::<u32>().ok()? == uid {
+                Some(parts[0].to_string())
+            } else {
+                None
             }
-        }
-    }
-    format!("{}", uid)
+        })
+    });
+
+    let username = username.unwrap_or_else(|| uid.to_string());
+    cache.insert(uid, username.clone());
+    username
 }
 
 impl PortScanner for LinuxScanner {
     fn scan(&self) -> Result<Vec<PortInfo>, PortError> {
         let mut ports = Vec::new();
+        let mut user_cache = HashMap::new();
 
         if let Ok(tcp_content) = std::fs::read_to_string("/proc/net/tcp") {
-            ports.extend(parse_proc_net_tcp(&tcp_content, "tcp"));
+            ports.extend(parse_proc_net_tcp(&tcp_content, "TCP", &mut user_cache));
         }
 
         if let Ok(tcp6_content) = std::fs::read_to_string("/proc/net/tcp6") {
-            ports.extend(parse_proc_net_tcp(&tcp6_content, "tcp6"));
+            ports.extend(parse_proc_net_tcp(&tcp6_content, "TCP", &mut user_cache));
         }
 
         if let Ok(udp_content) = std::fs::read_to_string("/proc/net/udp") {
-            ports.extend(parse_proc_net_udp(&udp_content, "udp"));
+            ports.extend(parse_proc_net_udp(&udp_content, "UDP", &mut user_cache));
         }
 
         if let Ok(udp6_content) = std::fs::read_to_string("/proc/net/udp6") {
-            ports.extend(parse_proc_net_udp(&udp6_content, "udp6"));
+            ports.extend(parse_proc_net_udp(&udp6_content, "UDP", &mut user_cache));
         }
 
         if !ports.is_empty() {
-            enhance_ports_with_process_info(&mut ports)?;
+            enhance_ports_with_process_info(&mut ports, &mut user_cache)?;
         }
 
         Ok(ports)
     }
 }
 
-fn parse_proc_net_tcp(content: &str, protocol: &str) -> Vec<PortInfo> {
+fn parse_proc_net_tcp(content: &str, protocol: &str, user_cache: &mut UserCache) -> Vec<PortInfo> {
     let mut ports = Vec::new();
 
     for line in content.lines().skip(1) {
@@ -129,32 +138,27 @@ fn parse_proc_net_tcp(content: &str, protocol: &str) -> Vec<PortInfo> {
         let local_addr = parts[1];
         let remote_addr = parts[2];
 
-        let port = match parse_hex_port(local_addr) {
-            Some(p) => p,
-            None => continue,
+        let Some(port) = parse_hex_port(local_addr) else {
+            continue;
         };
 
-        let state = parts[3];
-        let status = parse_tcp_state(state);
-
-        if status.is_none() {
+        let Some(status) = parse_tcp_state(parts[3]) else {
             continue;
-        }
+        };
 
         let uid = parts[7].parse::<u32>().unwrap_or(0);
-        let user = get_username_from_uid(uid);
-
-        let (local_addr_str, remote_addr_str) = parse_local_remote_addr(local_addr, remote_addr);
+        let user = get_username_from_uid(uid, user_cache);
+        let (local_addr, remote_addr) = parse_local_remote_addr(local_addr, remote_addr);
 
         ports.push(PortInfo {
             port,
             protocol: protocol.to_string(),
             pid: 0,
             process_name: String::new(),
-            status: status.unwrap(),
+            status,
             process_name_unknown: false,
-            local_addr: local_addr_str,
-            remote_addr: remote_addr_str,
+            local_addr,
+            remote_addr,
             user,
         });
     }
@@ -162,7 +166,7 @@ fn parse_proc_net_tcp(content: &str, protocol: &str) -> Vec<PortInfo> {
     ports
 }
 
-fn parse_proc_net_udp(content: &str, protocol: &str) -> Vec<PortInfo> {
+fn parse_proc_net_udp(content: &str, protocol: &str, user_cache: &mut UserCache) -> Vec<PortInfo> {
     let mut ports = Vec::new();
 
     for line in content.lines().skip(1) {
@@ -174,25 +178,23 @@ fn parse_proc_net_udp(content: &str, protocol: &str) -> Vec<PortInfo> {
         let local_addr = parts[1];
         let remote_addr = parts[2];
 
-        let port = match parse_hex_port(local_addr) {
-            Some(p) => p,
-            None => continue,
+        let Some(port) = parse_hex_port(local_addr) else {
+            continue;
         };
 
         let uid = parts[7].parse::<u32>().unwrap_or(0);
-        let user = get_username_from_uid(uid);
-
-        let (local_addr_str, remote_addr_str) = parse_local_remote_addr(local_addr, remote_addr);
+        let user = get_username_from_uid(uid, user_cache);
+        let (local_addr, remote_addr) = parse_local_remote_addr(local_addr, remote_addr);
 
         ports.push(PortInfo {
             port,
             protocol: protocol.to_string(),
             pid: 0,
             process_name: String::new(),
-            status: "-".to_string(),
+            status: String::new(),
             process_name_unknown: false,
-            local_addr: local_addr_str,
-            remote_addr: remote_addr_str,
+            local_addr,
+            remote_addr,
             user,
         });
     }
@@ -219,17 +221,33 @@ fn parse_tcp_state(state: &str) -> Option<String> {
 }
 
 fn parse_hex_port(addr: &str) -> Option<u16> {
-    let colon_pos = addr.find(':')?;
-    let port_hex = &addr[colon_pos + 1..];
+    let port_hex = addr.split_once(':')?.1;
     u16::from_str_radix(port_hex, 16).ok()
 }
 
-fn enhance_ports_with_process_info(ports: &mut [PortInfo]) -> Result<(), PortError> {
-    let _ = try_ss_command(ports);
+fn normalize_remote_addr_for_match(addr: &str) -> String {
+    match normalize_socket_addr(addr).as_str() {
+        "*:*" | "0.0.0.0:0" | "0.0.0.0:*" | "[::]:0" | "[::]:*" => "*:*".to_string(),
+        normalized => normalized.to_string(),
+    }
+}
+
+fn make_socket_key(protocol: &str, local_addr: &str, remote_addr: &str) -> SocketKey {
+    (
+        normalize_protocol_label(protocol),
+        normalize_socket_addr(local_addr),
+        normalize_remote_addr_for_match(remote_addr),
+    )
+}
+
+fn enhance_ports_with_process_info(
+    ports: &mut [PortInfo],
+    user_cache: &mut UserCache,
+) -> Result<(), PortError> {
+    let _ = try_ss_command(ports, user_cache);
 
     for port in ports.iter_mut() {
         if port.process_name.is_empty() {
-            port.process_name = "unknown".to_string();
             port.process_name_unknown = true;
         }
     }
@@ -237,48 +255,61 @@ fn enhance_ports_with_process_info(ports: &mut [PortInfo]) -> Result<(), PortErr
     Ok(())
 }
 
-fn try_ss_command(ports: &mut [PortInfo]) -> Result<(), PortError> {
-    let output = run_command("ss", &["-tulpn"])?;
-
-    let mut port_info_map: HashMap<u16, (u32, String, String)> = HashMap::new();
+fn try_ss_command(ports: &mut [PortInfo], user_cache: &mut UserCache) -> Result<(), PortError> {
+    let output = run_command("ss", &["-tunap"])?;
+    let mut port_info_map: HashMap<SocketKey, (u32, String, String)> = HashMap::new();
 
     for line in output.lines().skip(1) {
-        if !line.contains("users:") {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
         }
 
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 7 {
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() < 6 {
+            continue;
+        }
+
+        let protocol = normalize_protocol_label(parts[0]);
+        if protocol != "TCP" && protocol != "UDP" {
             continue;
         }
 
         let local_addr = parts[4];
-        let port = match parse_decimal_port(local_addr) {
-            Some(p) => p,
-            None => continue,
+        let remote_addr = parts[5];
+        let process_info = if parts.len() > 6 {
+            parts[6..].join(" ")
+        } else {
+            String::new()
         };
 
-        let process_col = match parts.get(6) {
-            Some(s) => s,
-            None => continue,
-        };
+        let pid = extract_pid_from_process_info(&process_info).unwrap_or(0);
+        let name = extract_name_from_process_info(&process_info);
+        let user = extract_user_from_process_info(&process_info, user_cache);
 
-        let pid = extract_pid_from_process_info(process_col).unwrap_or(0);
-        let name = extract_name_from_process_info(process_col);
-        let user = extract_user_from_process_info(process_col);
-
-        if pid > 0 || !name.is_empty() {
-            port_info_map.insert(port, (pid, name, user));
+        if pid == 0 && name.is_empty() {
+            continue;
         }
+
+        port_info_map.insert(
+            make_socket_key(&protocol, local_addr, remote_addr),
+            (pid, name, user),
+        );
     }
 
     for port in ports.iter_mut() {
-        if let Some((pid, name, user)) = port_info_map.get(&port.port) {
-            port.pid = *pid;
+        if let Some((pid, name, user)) = port_info_map.get(&make_socket_key(
+            &port.protocol,
+            &port.local_addr,
+            &port.remote_addr,
+        )) {
+            if *pid > 0 {
+                port.pid = *pid;
+            }
             if !name.is_empty() {
                 port.process_name = name.clone();
             }
-            if !user.is_empty() && port.user.is_empty() {
+            if !user.is_empty() {
                 port.user = user.clone();
             }
         }
@@ -288,31 +319,37 @@ fn try_ss_command(ports: &mut [PortInfo]) -> Result<(), PortError> {
 }
 
 fn extract_pid_from_process_info(info: &str) -> Option<u32> {
-    if let Some(pid_start) = info.find("pid=") {
-        let pid_str = &info[pid_start + 4..];
-        return pid_str.split(',').next()?.parse().ok();
-    }
-    None
+    let pid_start = info.find("pid=")?;
+    let pid = &info[pid_start + 4..];
+    pid.split([',', ')']).next()?.parse().ok()
 }
 
 fn extract_name_from_process_info(info: &str) -> String {
-    if let Some(start) = info.find("(\"") {
-        let rest = &info[start + 2..];
-        if let Some(end) = rest.find('"') {
-            return rest[..end].to_string();
-        }
-    }
-    String::new()
+    let Some(start) = info.find("(\"") else {
+        return String::new();
+    };
+
+    let rest = &info[start + 2..];
+    let Some(end) = rest.find('"') else {
+        return String::new();
+    };
+
+    rest[..end].to_string()
 }
 
-fn extract_user_from_process_info(info: &str) -> String {
-    if let Some(uid_start) = info.find("uid=") {
-        let uid_str = &info[uid_start + 4..];
-        if let Some(end) = uid_str.find(',') {
-            if let Ok(uid) = uid_str[..end].parse::<u32>() {
-                return get_username_from_uid(uid);
-            }
-        }
-    }
-    String::new()
+fn extract_user_from_process_info(info: &str, user_cache: &mut UserCache) -> String {
+    let Some(uid_start) = info.find("uid=") else {
+        return String::new();
+    };
+
+    let uid = &info[uid_start + 4..];
+    let Some(uid) = uid
+        .split([',', ')'])
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+    else {
+        return String::new();
+    };
+
+    get_username_from_uid(uid, user_cache)
 }

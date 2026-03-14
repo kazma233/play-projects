@@ -1,115 +1,213 @@
 <template>
-  <n-card size="small" style="height: 100%;">
-    <n-split direction="vertical" :default-size="0.35" style="height: calc(100vh - 280px); min-height: 400px;">
-      <template #1>
-        <n-flex vertical style="height: 100%; padding: 8px;">
-          <n-flex justify="space-between" align="center">
-            <n-text strong>输入 JSON</n-text>
-            <n-space>
-              <n-input
-                v-if="args.output"
-                v-model:value="jsonpathFilter"
-                placeholder="JsonPath: $.store.book[0].title"
-                clearable
-                @update:value="filter"
-                style="width: 260px;"
-              />
-              <n-button text type="primary" tag="a" href="https://goessner.net/articles/JsonPath" target="_blank">文档</n-button>
-            </n-space>
-          </n-flex>
-          <n-input
-            v-model:value="args.input"
-            type="textarea"
-            placeholder="输入原始 JSON..."
-            @update:value="format"
-            style="flex: 1;"
-          />
-        </n-flex>
-      </template>
-      
-      <template #2>
-        <n-flex vertical style="height: 100%; padding: 8px; background: #f9f9f9; border-radius: 4px;">
-          <n-text strong>格式化结果</n-text>
-          <div ref="containerContainer" style="flex: 1; overflow: hidden;"></div>
-        </n-flex>
-      </template>
-    </n-split>
-  </n-card>
+  <div class="page-view">
+    <n-card class="tool-surface tool-surface--fill" size="small" :bordered="false">
+      <n-split class="tool-split tool-split-frame tool-split-frame--tall" direction="vertical" :default-size="0.38">
+        <template #1>
+          <div class="tool-panel">
+            <div class="tool-panel__header">
+              <div class="tool-panel__title">
+                <strong>输入 JSON</strong>
+                <span class="tool-panel__meta">支持粘贴原始 JSON，自动格式化后同步到树视图。</span>
+              </div>
+
+              <div class="tool-inline-actions">
+                <n-input
+                  v-if="args.output"
+                  v-model:value="jsonpathFilter"
+                  class="tool-field tool-field--grow"
+                  placeholder="JsonPath: $.store.book[0].title"
+                  clearable
+                  @update:value="filter"
+                />
+                <n-button text type="primary" tag="a" href="https://goessner.net/articles/JsonPath" target="_blank">
+                  JsonPath 文档
+                </n-button>
+              </div>
+            </div>
+
+            <n-input
+              v-model:value="args.input"
+              class="tool-code-input tool-fill-area json-input"
+              type="textarea"
+              placeholder="输入原始 JSON..."
+              @update:value="format"
+            />
+          </div>
+        </template>
+
+        <template #2>
+          <div class="tool-panel tool-panel--muted">
+            <div class="tool-panel__header">
+              <div class="tool-panel__title">
+                <strong>格式化结果</strong>
+                <span class="tool-panel__meta">树视图、代码视图和表单视图可快速切换。</span>
+              </div>
+            </div>
+
+            <div ref="containerContainer" class="json-editor-stage tool-fill-area"></div>
+          </div>
+        </template>
+      </n-split>
+    </n-card>
+  </div>
 </template>
 
 <script setup>
-import { ref, watch } from "vue";
-import { JSONPath } from 'jsonpath-plus';
-import JSONEditor from 'jsoneditor';
-import 'jsoneditor/dist/jsoneditor.min.css';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { JSONPath } from 'jsonpath-plus'
+import JSONEditor from 'jsoneditor'
+import 'jsoneditor/dist/jsoneditor.min.css'
 
-const args = ref({ input: "", output: "" });
-const jsonpathFilter = ref('');
-const containerContainer = ref(null);
-const jsonEditor = ref(null);
+const args = ref({ input: '', output: '' })
+const jsonpathFilter = ref('')
+const containerContainer = ref(null)
+const jsonEditor = ref(null)
+
+const refreshEditorLayout = () => {
+  jsonEditor.value?.refresh?.()
+}
 
 watch(containerContainer, (newVal) => {
   if (newVal) {
-    initJsonEditor();
+    initJsonEditor()
     if (args.value.input) {
-      try { jsonEditor.value.set(JSON.parse(args.value.input)); } 
-      catch { jsonEditor.value.setText(args.value.input); }
+      try {
+        jsonEditor.value.set(JSON.parse(args.value.input))
+      } catch {
+        jsonEditor.value.setText(args.value.input)
+      }
     }
   }
-});
+})
 
 const initJsonEditor = () => {
-  if (!containerContainer.value) return;
-  if (jsonEditor.value) { jsonEditor.value.destroy(); jsonEditor.value = null; }
-  jsonEditor.value = new JSONEditor(containerContainer.value, { 
-    mode: 'tree', 
+  if (!containerContainer.value) {
+    return
+  }
+
+  if (jsonEditor.value) {
+    jsonEditor.value.destroy()
+    jsonEditor.value = null
+  }
+
+  jsonEditor.value = new JSONEditor(containerContainer.value, {
+    mode: 'tree',
     modes: ['code', 'tree', 'form'],
-    mainMenuBar: true
-  });
-};
+    mainMenuBar: true,
+    navigationBar: true,
+    statusBar: true
+  })
+
+  refreshEditorLayout()
+}
 
 const format = (value) => {
-  if (!value) { args.value.output = ""; return; }
+  if (!value) {
+    args.value.output = ''
+    return
+  }
+
   try {
-    const parsed = JSON.parse(value);
-    args.value.output = JSON.stringify(parsed, null, 2);
-    if (jsonEditor.value) jsonEditor.value.set(parsed);
+    const parsed = JSON.parse(value)
+    args.value.output = JSON.stringify(parsed, null, 2)
+    if (jsonEditor.value) {
+      jsonEditor.value.set(parsed)
+    }
   } catch (error) {
-    args.value.output = error.toString();
-    if (jsonEditor.value) jsonEditor.value.setText(value);
+    args.value.output = error.toString()
+    if (jsonEditor.value) {
+      jsonEditor.value.setText(value)
+    }
   }
 }
 
 const filter = (jsonpathStr) => {
   if (!jsonpathStr) {
     if (args.value.input) {
-      try { jsonEditor.value.set(JSON.parse(args.value.input)); }
-      catch { jsonEditor.value.setText(args.value.input); }
+      try {
+        jsonEditor.value.set(JSON.parse(args.value.input))
+      } catch {
+        jsonEditor.value.setText(args.value.input)
+      }
     }
-    return;
+    return
   }
+
   try {
-    const obj = JSONPath({ path: jsonpathStr, json: JSON.parse(args.value.output || args.value.input) });
-    if (jsonEditor.value) jsonEditor.value.set(obj);
-  } catch (error) { 
-    console.error('JsonPath error:', error); 
+    const result = JSONPath({ path: jsonpathStr, json: JSON.parse(args.value.output || args.value.input) })
+    if (jsonEditor.value) {
+      jsonEditor.value.set(result)
+    }
+  } catch (error) {
+    console.error('JsonPath error:', error)
   }
 }
+
+onMounted(() => {
+  window.addEventListener('resize', refreshEditorLayout)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', refreshEditorLayout)
+  jsonEditor.value?.destroy()
+  jsonEditor.value = null
+})
 </script>
 
-<style scoped>
-:deep(.n-input textarea) {
-  font-family: 'Fira Code', 'Consolas', monospace;
-  font-size: 14px;
-  line-height: 1.6;
+<style>
+.json-editor-stage {
+  min-height: clamp(14rem, 36vh, 20rem);
+  overflow: hidden;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 24, 88, 0.08);
+  background: rgba(255, 255, 255, 0.72);
 }
 
-:deep(.jsoneditor) {
-  height: 100%;
-  border: none;
+.json-input {
+  --tool-textarea-min-height: clamp(10rem, 28vh, 13rem);
 }
 
-:deep(.jsoneditor-outer) {
+.json-editor-stage .jsoneditor {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+}
+
+.json-editor-stage .jsoneditor-menu {
+  background: #001858;
+  border-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-wrap: wrap;
+  padding: 0.5rem;
+}
+
+.json-editor-stage .jsoneditor-menu > button,
+.json-editor-stage .jsoneditor-modes {
+  flex: 0 0 auto;
+}
+
+.json-editor-stage .jsoneditor-search {
+  flex: 1 1 min(100%, 12rem);
+  min-width: min(100%, 10rem);
+  margin-left: 0;
+}
+
+.json-editor-stage .jsoneditor-search input {
+  width: 100%;
+}
+
+.json-editor-stage .jsoneditor-navigation-bar,
+.json-editor-stage .jsoneditor-statusbar {
+  background: rgba(243, 210, 193, 0.42);
+  border-color: rgba(0, 24, 88, 0.08);
+}
+
+.json-editor-stage .jsoneditor-outer {
+  flex: 1;
+  min-height: 0;
+  height: auto;
 }
 </style>

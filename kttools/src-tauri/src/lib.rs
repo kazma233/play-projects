@@ -12,7 +12,7 @@ mod datetime;
 mod image_processor;
 mod ports;
 
-use image_processor::{OutputFormat, ProcessResult};
+use image_processor::{OutputFormat, ProcessResult, SavedImageResult};
 
 #[tauri::command]
 fn base64_encode(input: &str, url_mode: bool) -> String {
@@ -193,9 +193,9 @@ fn get_port_list() -> Result<Vec<ports::PortInfo>, String> {
 }
 
 #[tauri::command]
-async fn kill_process(port: u16) -> Result<String, String> {
+async fn kill_process(target: ports::KillTarget) -> Result<String, String> {
     let ports_list = ports::get_port_list().map_err(|e| e.to_string())?;
-    ports::kill_process(port, &ports_list)
+    ports::kill_process(&target, &ports_list)
         .await
         .map_err(|e| e.to_string())
 }
@@ -211,9 +211,10 @@ async fn process_image(
     format: OutputFormat,
     quality: u8,
     scale: u32,
+    webp_lossless: Option<bool>,
 ) -> Result<ProcessResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        image_processor::process_image(&path, format, quality, scale)
+        image_processor::process_image(&path, format, quality, scale, webp_lossless.unwrap_or(true))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -226,9 +227,17 @@ async fn process_and_save_image(
     format: OutputFormat,
     quality: u8,
     scale: u32,
-) -> Result<(String, Vec<u8>), String> {
+    webp_lossless: Option<bool>,
+) -> Result<SavedImageResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        image_processor::process_and_save_image(&input_path, &output_dir, format, quality, scale)
+        image_processor::process_and_save_image(
+            &input_path,
+            &output_dir,
+            format,
+            quality,
+            scale,
+            webp_lossless.unwrap_or(true),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
