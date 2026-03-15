@@ -29,8 +29,11 @@ createApp({
         const previewFileName = ref('');
         const previewContent = ref('');
         const isPreviewTruncated = ref(false);
-        const fileInput = ref(null);
-        const folderInput = ref(null);
+        const pasteUploadEnabled = ref(false);
+
+        const togglePasteUpload = () => {
+            pasteUploadEnabled.value = !pasteUploadEnabled.value;
+        };
 
         const textExtensions = [
             'bash', 'bat', 'c', 'cfg', 'cmd', 'cmake', 'conf', 'cpp', 'cs', 'css', 'dockerfile', 'dockerignore',
@@ -409,15 +412,26 @@ createApp({
         };
 
         const handleFileUpload = async (e) => {
+            const selectedFiles = [...e.target.files].map(f => {
+                f.relativePath = f.name;
+                return f;
+            });
+            if (selectedFiles.length === 0) return;
+
             uploadProgress.value = 0;
-            const files = [...e.target.files];
-            const result = await uploadFiles(files, (p) => uploadProgress.value = p);
+            const result = await uploadFiles(selectedFiles, (p) => uploadProgress.value = p);
             handleUploadResult(result);
             e.target.value = '';
         };
 
         const handleFolderUpload = async (e) => {
-            const files = [...e.target.files].map(f => (f.relativePath = f.webkitRelativePath || f.name, f));
+            const files = [...e.target.files].map(f => {
+                f.relativePath = f.webkitRelativePath || f.name;
+                return f;
+            });
+            
+            if (files.length === 0) return;
+            
             uploadProgress.value = 0;
             const result = await uploadFiles(files, (p) => uploadProgress.value = p);
             handleUploadResult(result);
@@ -605,6 +619,8 @@ createApp({
         };
 
         const handlePaste = async (e) => {
+            if (!pasteUploadEnabled.value) return;
+
             const data = e.clipboardData || window.clipboardData;
             if (!data) return;
 
@@ -655,9 +671,9 @@ createApp({
             message, messageType,
             showNewFolderModal, showRenameDialog, showPreview, newFolderName, renameNewName,
             previewPath, previewFileName, previewContent, isPreviewTruncated,
-            fileInput, folderInput, pathSegments, isAllSelected, previewUrl, isImage, isText,
+            pasteUploadEnabled, pathSegments, isAllSelected, previewUrl, isImage, isText,
             sortField, sortDirection, sortedFiles,
-            navigateTo, navigateUp, navigateToSegment, toggleSelectAll, toggleSort,
+            navigateTo, navigateUp, navigateToSegment, toggleSelectAll, toggleSort, togglePasteUpload,
             createFolder, deleteFile, deleteSelected, showRenameModal, doRename,
             downloadFile, downloadSelected, previewFile,
             handleFileUpload, handleFolderUpload, handleDrop,

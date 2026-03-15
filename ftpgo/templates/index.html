@@ -25,11 +25,48 @@
 
         <!-- 主内容区 -->
         <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <!-- 工具栏 -->
-            <div class="bg-white rounded-lg shadow p-4 mb-6">
-                <div class="flex flex-wrap items-center justify-between gap-4">
-                    <!-- 面包屑导航 -->
-                    <div class="flex items-center flex-wrap">
+            <!-- 拖拽上传区域 -->
+            <div
+                class="file-drop-zone rounded-lg bg-white p-6 mb-6 cursor-pointer relative"
+                :class="{ 'dragover': isDragging }"
+                @dragenter.prevent="isDragging = true"
+                @dragleave.prevent="isDragging = false"
+                @dragover.prevent
+                @drop.prevent="handleDrop"
+            >
+                <div class="flex items-center justify-between">
+                    <!-- 左侧：提示文字 -->
+                    <div class="flex-1 text-center">
+                        <i class="fas fa-cloud-arrow-up text-4xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600">拖拽文件/文件夹到此处上传</p>
+                        <p v-if="pasteUploadEnabled" class="text-gray-400 text-sm mt-2">或在此区域按 Ctrl+V 粘贴</p>
+                    </div>
+                    
+                    <!-- 右侧：操作按钮 -->
+                    <div class="flex flex-col space-y-3 ml-6">
+                        <label class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition cursor-pointer text-sm font-medium text-center">
+                            <i class="fas fa-file mr-1"></i>选择文件
+                            <input type="file" multiple class="hidden" @change="handleFileUpload">
+                        </label>
+                        <label class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition cursor-pointer text-sm font-medium text-center">
+                            <i class="fas fa-folder mr-1"></i>选择文件夹
+                            <input type="file" webkitdirectory directory multiple class="hidden" @change="handleFolderUpload">
+                        </label>
+                        <button
+                            @click.stop="togglePasteUpload"
+                            :class="['px-4 py-2 rounded text-sm font-medium transition-colors', pasteUploadEnabled ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300']"
+                        >
+                            粘贴上传
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 文件列表 -->
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <!-- 面包屑和选中操作栏 -->
+                <div class="bg-gray-50 px-6 py-3 border-b border-gray-200 flex items-center justify-between">
+                    <div class="flex items-center flex-wrap text-sm flex-1">
                         <button @click="navigateTo('')" class="text-blue-600 hover:text-blue-800 font-medium">
                             <i class="fas fa-home mr-1"></i>根目录
                         </button>
@@ -40,51 +77,30 @@
                             </button>
                         </template>
                     </div>
-
-                    <!-- 操作按钮 -->
-                    <div class="flex items-center space-x-2">
-                        <button @click="showNewFolderModal = true" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition">
-                            <i class="fas fa-folder-plus mr-2"></i>新建文件夹
+                    <div class="flex items-center">
+                        <button @click="showNewFolderModal = true" class="text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition">
+                            <i class="fas fa-folder-plus mr-1"></i>新建
                         </button>
-                        <label class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition cursor-pointer">
-                            <i class="fas fa-upload mr-2"></i>上传文件
-                            <input type="file" multiple class="hidden" @change="handleFileUpload" ref="fileInput">
-                        </label>
-                        <label class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition cursor-pointer">
-                            <i class="fas fa-folder-plus mr-2"></i>上传文件夹
-                            <input type="file" webkitdirectory directory multiple class="hidden" @change="handleFolderUpload" ref="folderInput">
-                        </label>
-                        <button v-if="selectedFiles.length > 0" @click="downloadSelected" class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition">
-                            <i class="fas fa-download mr-2"></i>下载选中 ({{ selectedFiles.length }})
+                    </div>
+                    <div v-if="selectedFiles.length > 0" class="flex items-center space-x-2 ml-4">
+                        <button @click="downloadSelected" class="text-xs px-2 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 transition">
+                            <i class="fas fa-download mr-1"></i>下载
                         </button>
-                        <button v-if="selectedFiles.length > 0" @click="deleteSelected" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition">
-                            <i class="fas fa-trash mr-2"></i>删除
+                        <button @click="deleteSelected" class="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition">
+                            <i class="fas fa-trash mr-1"></i>删除
                         </button>
                     </div>
                 </div>
-            </div>
-
-            <!-- 拖拽上传区域 -->
-            <div
-                class="file-drop-zone rounded-lg bg-white p-8 mb-6 text-center"
-                :class="{ 'dragover': isDragging }"
-                @dragenter.prevent="isDragging = true"
-                @dragleave.prevent="isDragging = false"
-                @dragover.prevent
-                @drop.prevent="handleDrop"
-            >
-                <i class="fas fa-cloud-arrow-up text-4xl text-gray-400 mb-4"></i>
-                <p class="text-gray-600">拖拽文件或文件夹到此处上传</p>
-                <p class="text-gray-400 text-sm mt-2">或在此区域按 Ctrl+V 粘贴文件/图片/文字</p>
-            </div>
-
-            <!-- 文件列表 -->
-            <div class="bg-white rounded-lg shadow overflow-hidden">
                 <table class="min-w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
                         <tr>
                             <th class="px-6 py-3 text-left">
-                                <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="rounded border-gray-300">
+                                <div class="flex items-center space-x-2">
+                                    <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="rounded border-gray-300">
+                                    <span v-if="selectedFiles.length > 0" class="text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded leading-none">
+                                        {{ selectedFiles.length }}
+                                    </span>
+                                </div>
                             </th>
                             <th v-for="col in [{key:'name',label:'名称'},{key:'size',label:'大小'},{key:'modTime',label:'修改时间'}]" :key="col.key" @click="toggleSort(col.key)" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none">
                                 <span class="flex items-center">
@@ -141,7 +157,7 @@
                         </tr>
 
                         <!-- 空状态 -->
-                        <tr v-if="files.length === 0 && !currentPath">
+                        <tr v-if="files.length === 0">
                             <td colspan="5" class="px-6 py-12 text-center text-gray-500">
                                 <i class="fas fa-folder-open text-4xl mb-4"></i>
                                 <p>文件夹为空</p>

@@ -414,10 +414,10 @@ func (h *Handlers) serveRange(filePath, rangeHeader string, fileSize int64, c fi
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).SendString("Failed to open file")
 	}
-	defer file.Close()
 
 	_, err = file.Seek(start, io.SeekStart)
 	if err != nil {
+		file.Close()
 		return c.Status(http.StatusInternalServerError).SendString("Failed to seek file")
 	}
 
@@ -426,7 +426,8 @@ func (h *Handlers) serveRange(filePath, rangeHeader string, fileSize int64, c fi
 	c.Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	c.Set("Cache-Control", "private, no-store")
 
-	return c.SendStream(io.LimitReader(file, contentLength))
+	// SendStream sends asynchronously after the handler returns, so Fiber must own the file.
+	return c.SendStream(file, int(contentLength))
 }
 
 func parseSingleRange(rangeHeader string, fileSize int64) (int64, int64, error) {
