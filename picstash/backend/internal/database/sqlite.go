@@ -4,10 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
@@ -20,7 +21,7 @@ func Init(dbPath string) error {
 	}
 
 	var err error
-	db, err = sql.Open("sqlite", dbPath)
+	db, err = sql.Open("sqlite3", sqliteDSN(dbPath))
 	if err != nil {
 		return fmt.Errorf("打开数据库失败: %w", err)
 	}
@@ -29,12 +30,22 @@ func Init(dbPath string) error {
 		return fmt.Errorf("连接数据库失败: %w", err)
 	}
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(25)
+	// SQLite 对并发写入比较敏感，保守连接池配置更稳妥。
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	slog.Info("数据库连接成功", "path", dbPath)
 
 	return nil
+}
+
+func sqliteDSN(dbPath string) string {
+	values := url.Values{}
+	values.Set("_busy_timeout", "5000")
+	values.Set("_foreign_keys", "on")
+	values.Set("_journal_mode", "WAL")
+
+	return fmt.Sprintf("file:%s?%s", dbPath, values.Encode())
 }
 
 func GetDB() *sql.DB {

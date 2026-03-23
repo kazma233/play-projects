@@ -15,7 +15,7 @@
 
 ### 后端
 - **框架**: Go 1.25 + Fiber v3
-- **数据库**: SQLite3 (modernc.org/sqlite，无CGO)
+- **数据库**: SQLite3 (github.com/mattn/go-sqlite3)
 - **存储**: 支持 GitHub REST API (go-github/v58) 或本地文件系统
 - **认证**: JWT (golang-jwt/jwt/v5) + 邮箱验证码
 - **配置**: Viper
