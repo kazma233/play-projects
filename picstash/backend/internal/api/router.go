@@ -47,7 +47,7 @@ func SetupRoutes(
 	contentGroup.Get("/images", imageHandler.GetList)
 	contentGroup.Get("/images/:id", imageHandler.GetByID)
 	contentGroup.Get("/tags", tagHandler.GetAll)
-	contentGroup.Get("/tags/:id/images", tagHandler.GetByImageID)
+	contentGroup.Get("/tags/:id/images", imageHandler.GetListByTag)
 	contentGroup.Get("/sync/logs", syncLogHandler.GetList)
 	contentGroup.Get("/sync/logs/:id", syncLogHandler.GetByID)
 	contentGroup.Get("/sync/logs/:id/files", syncLogHandler.GetFileLogs)

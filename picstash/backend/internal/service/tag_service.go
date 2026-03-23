@@ -119,20 +119,3 @@ func (s *TagService) GetAll() ([]*model.Tag, error) {
 
 	return tags, nil
 }
-
-func (s *TagService) GetByImageID(imageID int64) ([]*model.Tag, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("开始事务失败: %w", err)
-	}
-	defer tx.Rollback()
-
-	tagRepo := repository.NewTagRepository(tx)
-
-	tags, err := tagRepo.GetByImageID(imageID)
-	if err != nil {
-		return nil, err
-	}
-
-	return tags, nil
-}

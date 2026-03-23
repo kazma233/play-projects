@@ -199,6 +199,8 @@ POST /api/auth/verify         # 验证码登录
 - `cursor`: 下一页游标，首屏请求可省略（基于上一页最后一张图片的 `id`）
 - `tag_id`: 按标签筛选
 
+`GET /api/tags/:id/images` 支持与 `GET /api/images` 相同的 `limit` / `cursor` 分页参数，等价于按路径参数中的标签 ID 过滤图片。
+
 `GET /api/images` 返回字段：
 - `data`: 当前批次图片列表
 - `total`: 当前筛选条件下的总数

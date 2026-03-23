@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -300,8 +301,7 @@ func (s *ImageSyncService) loadSyncContext(logID int64) (*model.Tag, []*model.Im
 	defer tx.Rollback()
 
 	imageRepo := repository.NewImageRepository(tx)
-
-	syncTag, err := imageRepo.GetOrCreateSyncTag()
+	syncTag, err := s.getOrCreateSyncTag(tx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("获取或创建同步标签失败: %w", err)
 	}
@@ -355,6 +355,7 @@ func (s *ImageSyncService) processOriginalBatch(
 	defer tx.Rollback()
 
 	imageRepo := repository.NewImageRepository(tx)
+	imageTagRepo := repository.NewImageTagRepository(tx)
 	syncLogRepo := repository.NewSyncLogRepository(tx)
 
 	result := &originalBatchResult{
@@ -369,7 +370,7 @@ func (s *ImageSyncService) processOriginalBatch(
 
 		if dbImage == nil {
 			slog.Info("文件不在数据库中，创建新记录", "log_id", logID, "path", storageFile.Path)
-			image, err := s.createImageFromStorage(ctx, storageFile, syncTagID, imageRepo)
+			image, err := s.createImageFromStorage(ctx, storageFile, syncTagID, imageRepo, imageTagRepo)
 			if err != nil {
 				errMsg := fmt.Sprintf("创建图片记录失败: %v", err)
 				slog.Error(errMsg, "log_id", logID, "path", storageFile.Path)
@@ -439,6 +440,7 @@ func (s *ImageSyncService) processDeleteBatch(logID int64, batch []*model.Image)
 	defer tx.Rollback()
 
 	imageRepo := repository.NewImageRepository(tx)
+	imageTagRepo := repository.NewImageTagRepository(tx)
 	syncLogRepo := repository.NewSyncLogRepository(tx)
 
 	result := &deleteBatchResult{}
@@ -447,6 +449,14 @@ func (s *ImageSyncService) processDeleteBatch(logID int64, batch []*model.Image)
 		err := imageRepo.SoftDeleteImage(dbImage.ID)
 		if err != nil {
 			errMsg := fmt.Sprintf("软删除图片失败: %v", err)
+			slog.Error(errMsg, "log_id", logID, "path", dbImage.Path)
+			_ = syncLogRepo.CreateSyncFileLog(logID, dbImage.Path, "deleted", "failed", nil, &dbImage.SHA, nil, dbImage.Size, &errMsg)
+			result.ErrorCount++
+			continue
+		}
+
+		if err := imageTagRepo.SoftDeleteByImageID(dbImage.ID); err != nil {
+			errMsg := fmt.Sprintf("软删除图片标签失败: %v", err)
 			slog.Error(errMsg, "log_id", logID, "path", dbImage.Path)
 			_ = syncLogRepo.CreateSyncFileLog(logID, dbImage.Path, "deleted", "failed", nil, &dbImage.SHA, nil, dbImage.Size, &errMsg)
 			result.ErrorCount++
@@ -463,6 +473,28 @@ func (s *ImageSyncService) processDeleteBatch(logID int64, batch []*model.Image)
 	}
 
 	return result, nil
+}
+
+func (s *ImageSyncService) getOrCreateSyncTag(tx *sql.Tx) (*model.Tag, error) {
+	tagRepo := repository.NewTagRepository(tx)
+
+	tag, err := tagRepo.GetByName("同步")
+	if err == nil {
+		return tag, nil
+	}
+	if !errors.Is(err, repository.ErrTagNotFound) {
+		return nil, err
+	}
+
+	tag, err = tagRepo.Create("同步", "#9CA3AF")
+	if err != nil {
+		if errors.Is(err, repository.ErrTagNameExists) {
+			return tagRepo.GetByName("同步")
+		}
+		return nil, err
+	}
+
+	return tag, nil
 }
 
 func (s *ImageSyncService) deriveThumbnailPath(originalPath string) string {
@@ -532,7 +564,13 @@ func (s *ImageSyncService) updateDerivedImageMeta(
 	}
 }
 
-func (s *ImageSyncService) createImageFromStorage(ctx context.Context, storageFile *storage.RepositoryFile, syncTagID int64, imageRepo repository.ImageRepositoryInterface) (*model.Image, error) {
+func (s *ImageSyncService) createImageFromStorage(
+	ctx context.Context,
+	storageFile *storage.RepositoryFile,
+	syncTagID int64,
+	imageRepo repository.ImageRepositoryInterface,
+	imageTagRepo repository.ImageTagRepositoryInterface,
+) (*model.Image, error) {
 	mimeType := "image/jpeg"
 	if strings.LastIndex(storageFile.Path, ".") > 0 {
 		mimeType = imageutil.GetMimeType(storageFile.Path)
@@ -581,7 +619,7 @@ func (s *ImageSyncService) createImageFromStorage(ctx context.Context, storageFi
 	}
 	image.ID = id
 
-	err = imageRepo.AddImageTags(id, []int{int(syncTagID)})
+	err = imageTagRepo.AddImageTags(id, []int{int(syncTagID)})
 	if err != nil {
 		return nil, fmt.Errorf("关联同步标签失败: %w", err)
 	}

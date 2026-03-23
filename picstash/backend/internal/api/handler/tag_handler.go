@@ -87,6 +87,11 @@ func (h *TagHandler) Update(c fiber.Ctx) error {
 				"error": "标签名称已存在",
 			})
 		}
+		if errors.Is(err, repository.ErrTagNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "标签不存在",
+			})
+		}
 		slog.Error("更新标签失败", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "更新标签失败",
@@ -100,6 +105,11 @@ func (h *TagHandler) Delete(c fiber.Ctx) error {
 	id := fiber.Params[int](c, "id")
 
 	if err := h.tagService.Delete(int64(id)); err != nil {
+		if errors.Is(err, repository.ErrTagNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "标签不存在",
+			})
+		}
 		slog.Error("删除标签失败", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "删除标签失败",
@@ -109,18 +119,4 @@ func (h *TagHandler) Delete(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"message": "删除成功",
 	})
-}
-
-func (h *TagHandler) GetByImageID(c fiber.Ctx) error {
-	id := fiber.Params[int](c, "id")
-
-	tags, err := h.tagService.GetByImageID(int64(id))
-	if err != nil {
-		slog.Error("获取图片标签失败", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "获取标签失败",
-		})
-	}
-
-	return c.JSON(tags)
 }

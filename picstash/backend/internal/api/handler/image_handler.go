@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"strconv"
 
+	"picstash/internal/repository"
 	"picstash/internal/service"
 
 	"github.com/gofiber/fiber/v3"
@@ -39,6 +40,18 @@ func (h *ImageHandler) GetList(c fiber.Ctx) error {
 		}
 	}
 
+	return h.renderImageList(c, cursor, limit, tagID)
+}
+
+func (h *ImageHandler) GetListByTag(c fiber.Ctx) error {
+	tagID := fiber.Params[int](c, "id")
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	cursor := c.Query("cursor")
+
+	return h.renderImageList(c, cursor, limit, &tagID)
+}
+
+func (h *ImageHandler) renderImageList(c fiber.Ctx, cursor string, limit int, tagID *int) error {
 	result, err := h.imageService.GetList(cursor, limit, tagID)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidImageCursor) {
@@ -71,8 +84,14 @@ func (h *ImageHandler) GetByID(c fiber.Ctx) error {
 
 	image, err := h.imageService.GetByID(int64(id))
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "图片不存在",
+		if errors.Is(err, repository.ErrImageNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "图片不存在",
+			})
+		}
+		slog.Error("获取图片失败", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "获取图片失败",
 		})
 	}
 
@@ -217,6 +236,11 @@ func (h *ImageHandler) Delete(c fiber.Ctx) error {
 
 	ctx := c.RequestCtx()
 	if err := h.imageService.Delete(ctx, int64(id)); err != nil {
+		if errors.Is(err, repository.ErrImageNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "图片不存在",
+			})
+		}
 		slog.Error("删除图片失败", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "删除图片失败",
@@ -242,6 +266,11 @@ func (h *ImageHandler) UpdateTags(c fiber.Ctx) error {
 	}
 
 	if err := h.imageService.UpdateTags(int64(id), req.TagIDs); err != nil {
+		if errors.Is(err, repository.ErrImageNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "图片不存在",
+			})
+		}
 		slog.Error("更新标签失败", "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "更新标签失败",

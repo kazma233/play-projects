@@ -264,6 +264,7 @@ func (s *ImageService) UploadWithContent(
 	defer tx.Rollback()
 
 	imageRepo := repository.NewImageRepository(tx)
+	imageTagRepo := repository.NewImageTagRepository(tx)
 
 	id, err := imageRepo.CreateImage(image)
 	if err != nil {
@@ -273,7 +274,7 @@ func (s *ImageService) UploadWithContent(
 
 	slog.Info("准备关联标签", "image_id", id, "tag_count", len(tagIDs), "tag_ids", tagIDs)
 	if len(tagIDs) > 0 {
-		err = imageRepo.AddImageTags(id, tagIDs)
+		err = imageTagRepo.AddImageTags(id, tagIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -297,6 +298,7 @@ func (s *ImageService) Delete(ctx context.Context, id int64) error {
 	defer tx.Rollback()
 
 	imageRepo := repository.NewImageRepository(tx)
+	imageTagRepo := repository.NewImageTagRepository(tx)
 
 	image, err := imageRepo.GetImageByID(id)
 	if err != nil {
@@ -326,6 +328,10 @@ func (s *ImageService) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 
+	if err := imageTagRepo.SoftDeleteByImageID(id); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交事务失败: %w", err)
 	}
@@ -351,13 +357,26 @@ func (s *ImageService) GetList(cursor string, limit int, tagID *int) (*ImageList
 
 	imageRepo := repository.NewImageRepository(tx)
 
-	images, err := imageRepo.GetImagesByCursor(parsedCursor, limit+1, tagID)
-	if err != nil {
-		return nil, err
+	var images []*model.Image
+	var total int
+	if tagID == nil {
+		images, err = imageRepo.GetImagesByCursor(parsedCursor, limit+1)
+		if err != nil {
+			return nil, err
+		}
+
+		total, err = imageRepo.CountImages()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		images, total, err = s.getImagesByTag(tx, parsedCursor, limit+1, int64(*tagID))
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	total, err := imageRepo.CountImages(tagID)
-	if err != nil {
+	if err := s.loadTagsForImages(tx, images); err != nil {
 		return nil, err
 	}
 
@@ -402,6 +421,10 @@ func (s *ImageService) GetByID(id int64) (*model.Image, error) {
 		return nil, err
 	}
 
+	if err := s.loadTagsForImages(tx, []*model.Image{image}); err != nil {
+		return nil, err
+	}
+
 	// 填充完整URL
 	s.fillImageURLs(image)
 
@@ -416,10 +439,21 @@ func (s *ImageService) UpdateTags(id int64, tagIDs []int) error {
 	defer tx.Rollback()
 
 	imageRepo := repository.NewImageRepository(tx)
+	imageTagRepo := repository.NewImageTagRepository(tx)
 
-	err = imageRepo.UpdateImageTags(id, tagIDs)
-	if err != nil {
+	if _, err := imageRepo.GetImageByID(id); err != nil {
 		return err
+	}
+
+	if err := imageTagRepo.SoftDeleteByImageID(id); err != nil {
+		return err
+	}
+
+	if len(tagIDs) > 0 {
+		err = imageTagRepo.AddImageTags(id, tagIDs)
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -429,6 +463,168 @@ func (s *ImageService) UpdateTags(id int64, tagIDs []int) error {
 	slog.Info("更新图片标签成功", "image_id", id, "tag_count", len(tagIDs))
 
 	return nil
+}
+
+func (s *ImageService) loadTagsForImages(tx *sql.Tx, images []*model.Image) error {
+	if len(images) == 0 {
+		return nil
+	}
+
+	imageIDs := make([]int64, 0, len(images))
+	imageMap := make(map[int64]*model.Image, len(images))
+	for _, image := range images {
+		image.Tags = nil
+		imageIDs = append(imageIDs, image.ID)
+		imageMap[image.ID] = image
+	}
+
+	imageTagRepo := repository.NewImageTagRepository(tx)
+	relations, err := imageTagRepo.ListByImageIDs(imageIDs)
+	if err != nil {
+		return err
+	}
+
+	if len(relations) == 0 {
+		return nil
+	}
+
+	tagIDSet := make(map[int64]struct{})
+	tagIDs := make([]int64, 0, len(relations))
+	for _, relation := range relations {
+		if _, exists := tagIDSet[relation.TagID]; exists {
+			continue
+		}
+		tagIDSet[relation.TagID] = struct{}{}
+		tagIDs = append(tagIDs, relation.TagID)
+	}
+
+	tagRepo := repository.NewTagRepository(tx)
+	tags, err := tagRepo.GetByIDs(tagIDs)
+	if err != nil {
+		return err
+	}
+
+	tagMap := make(map[int64]model.Tag, len(tags))
+	for _, tag := range tags {
+		tagMap[tag.ID] = *tag
+	}
+
+	for _, relation := range relations {
+		image := imageMap[relation.ImageID]
+		tag, exists := tagMap[relation.TagID]
+		if !exists || image == nil {
+			continue
+		}
+		image.Tags = append(image.Tags, tag)
+	}
+
+	return nil
+}
+
+func (s *ImageService) getImagesByTag(tx *sql.Tx, cursor *model.ImageListCursor, limit int, tagID int64) ([]*model.Image, int, error) {
+	tagRepo := repository.NewTagRepository(tx)
+	if _, err := tagRepo.GetByID(tagID); err != nil {
+		if errors.Is(err, repository.ErrTagNotFound) {
+			return nil, 0, nil
+		}
+		return nil, 0, err
+	}
+
+	total, err := s.countImagesByTag(tx, tagID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	imageRepo := repository.NewImageRepository(tx)
+	imageTagRepo := repository.NewImageTagRepository(tx)
+
+	var relationCursor *int64
+	if cursor != nil {
+		relationCursor = &cursor.ID
+	}
+
+	batchLimit := limit
+	if batchLimit < 20 {
+		batchLimit = 20
+	}
+
+	images := make([]*model.Image, 0, limit)
+	seen := make(map[int64]struct{}, limit)
+	for len(images) < limit {
+		imageIDs, err := imageTagRepo.ListImageIDsByTagID(tagID, relationCursor, batchLimit)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(imageIDs) == 0 {
+			break
+		}
+
+		fetchedImages, err := imageRepo.GetImagesByIDs(imageIDs)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		imageMap := make(map[int64]*model.Image, len(fetchedImages))
+		for _, image := range fetchedImages {
+			imageMap[image.ID] = image
+		}
+
+		for _, imageID := range imageIDs {
+			image := imageMap[imageID]
+			if image == nil {
+				continue
+			}
+			if _, exists := seen[image.ID]; exists {
+				continue
+			}
+			seen[image.ID] = struct{}{}
+			images = append(images, image)
+			if len(images) == limit {
+				break
+			}
+		}
+
+		nextCursor := imageIDs[len(imageIDs)-1]
+		relationCursor = &nextCursor
+		if len(imageIDs) < batchLimit {
+			break
+		}
+	}
+
+	return images, total, nil
+}
+
+func (s *ImageService) countImagesByTag(tx *sql.Tx, tagID int64) (int, error) {
+	imageRepo := repository.NewImageRepository(tx)
+	imageTagRepo := repository.NewImageTagRepository(tx)
+
+	const batchSize = 200
+
+	total := 0
+	var relationCursor *int64
+	for {
+		imageIDs, err := imageTagRepo.ListImageIDsByTagID(tagID, relationCursor, batchSize)
+		if err != nil {
+			return 0, err
+		}
+		if len(imageIDs) == 0 {
+			break
+		}
+
+		batchCount, err := imageRepo.CountImagesByIDs(imageIDs)
+		if err != nil {
+			return 0, err
+		}
+		total += batchCount
+
+		nextCursor := imageIDs[len(imageIDs)-1]
+		relationCursor = &nextCursor
+		if len(imageIDs) < batchSize {
+			break
+		}
+	}
+
+	return total, nil
 }
 
 func intPtr(i int) *int {
