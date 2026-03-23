@@ -173,8 +173,13 @@ func (s *ImageService) UploadWithContent(
 	slog.Info("上传成功", "path", storagePath, "sha", uploadResult.SHA)
 
 	hasWatermark := len(watermarkContent) > 0
+	createdAt := time.Now()
 
 	image := &model.Image{
+		BaseModel: model.BaseModel{
+			CreatedAt: createdAt,
+			Deleted:   model.DeleteStateNotDeleted,
+		},
 		Path:             uploadResult.Path,
 		URL:              uploadResult.URL,
 		SHA:              uploadResult.SHA,
@@ -186,7 +191,7 @@ func (s *ImageService) UploadWithContent(
 		Height:           intPtr(height),
 		HasThumbnail:     false,
 		HasWatermark:     hasWatermark,
-		UploadedAt:       time.Now(),
+		UploadedAt:       createdAt,
 	}
 
 	if hasWatermark {

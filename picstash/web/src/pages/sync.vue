@@ -1,10 +1,44 @@
 <template>
   <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-    <div class="mb-6 flex justify-between items-center">
-      <h1 class="text-2xl font-bold text-gray-900">同步日志</h1>
-      <router-link to="/upload" class="text-primary hover:underline">
-        返回上传页面
-      </router-link>
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold text-gray-900">存储同步</h1>
+      <p class="mt-1 text-sm text-gray-500">确认后会触发一次同步任务，下面可以查看同步历史和文件明细。</p>
+    </div>
+
+    <div class="mb-6 rounded-lg border border-gray-200 bg-white p-4">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div class="text-base font-medium text-gray-900">手动触发同步</div>
+          <p class="mt-1 text-sm text-gray-500">
+            会扫描当前存储中的图片文件，并更新数据库记录及同步日志。
+          </p>
+        </div>
+        <div class="flex flex-col gap-3 sm:flex-row">
+          <button
+            @click="refreshLogs"
+            :disabled="loading"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-gray-700 transition hover:border-gray-400 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {{ loading ? '刷新中...' : '刷新记录' }}
+          </button>
+          <button
+            @click="handleSync"
+            :disabled="syncing"
+            class="rounded-lg bg-gray-900 px-4 py-2 text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {{ syncing ? '提交中...' : '开始同步' }}
+          </button>
+        </div>
+      </div>
+
+      <div v-if="syncTask" class="mt-4 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-900">
+        <p class="font-medium">
+          {{ syncTask.started ? '同步任务已创建' : '已有同步任务在进行中' }}
+        </p>
+        <p class="mt-1">
+          日志 ID: {{ syncTask.log_id }}。可以点击“刷新记录”查看最新进度，并展开文件处理明细。
+        </p>
+      </div>
     </div>
 
     <div v-if="loading" class="text-center py-8">
@@ -12,9 +46,14 @@
     </div>
 
     <div v-else>
+      <div class="mb-4 text-sm font-medium text-gray-700">
+        同步历史
+      </div>
+
       <div v-for="log in syncLogs" :key="log.id" class="border rounded-lg mb-4 p-4 hover:shadow-md transition-shadow">
         <div class="flex justify-between items-start mb-2">
           <div>
+            <p class="text-sm font-medium text-gray-900">日志 ID: {{ log.id }}</p>
             <p class="text-sm text-gray-500">{{ log.triggered_by }}</p>
             <p class="text-xs text-gray-400">
               {{ formatTime(log.started_at) }} - {{ log.completed_at ? formatTime(log.completed_at) : '进行中...' }}
@@ -115,22 +154,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
+import { imagesApi } from '@/api'
 import { syncApi } from '@/api/sync'
-import type { SyncLog, SyncFileLog, PaginatedResponse } from '@/types'
+import type { SyncLog, SyncFileLog, PaginatedResponse, SyncStartResult } from '@/types'
+import { useConfirm } from '@/utils/confirm'
 import { useNotifications } from '@/utils/notification'
 
-const { notifyError } = useNotifications()
+const { confirmAction } = useConfirm()
+const { notifyError, notifyInfo, notifySuccess } = useNotifications()
 const syncLogs = ref<SyncLog[]>([])
 const fileLogs = ref<SyncFileLog[]>([])
 const selectedLogId = ref<number | null>(null)
+const syncTask = ref<SyncStartResult | null>(null)
+const syncing = ref(false)
 const loading = ref(false)
 const loadingMore = ref(false)
 const fileLogsLoading = ref(false)
 const noMore = ref(false)
 const page = ref(1)
 const limit = 20
-let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const loadLogs = async (loadMore = false) => {
   if (loading.value || loadingMore.value || (loadMore && noMore.value)) return
@@ -175,6 +218,37 @@ const loadLogs = async (loadMore = false) => {
 }
 
 const loadMore = () => loadLogs(true)
+const refreshLogs = () => loadLogs()
+
+const handleSync = async () => {
+  const confirmed = await confirmAction({
+    title: '开始从存储同步？',
+    message: '同步会扫描当前存储中的文件，并写入新的同步日志。',
+    confirmText: '确认同步',
+    cancelText: '取消',
+  })
+
+  if (!confirmed) return
+
+  syncing.value = true
+  try {
+    const res = await imagesApi.sync()
+    syncTask.value = res.data.data as SyncStartResult
+    if (syncTask.value.started) {
+      notifySuccess('同步任务已开始')
+    } else {
+      notifyInfo('已有同步任务在进行中')
+    }
+    selectedLogId.value = null
+    fileLogs.value = []
+    await loadLogs()
+  } catch (error) {
+    console.error('同步失败:', error)
+    notifyError('同步失败')
+  } finally {
+    syncing.value = false
+  }
+}
 
 const toggleFileDetails = async (logId: number) => {
   if (selectedLogId.value === logId) {
@@ -238,16 +312,5 @@ const getActionText = (action: string) => {
 
 onMounted(() => {
   loadLogs()
-
-  refreshTimer = setInterval(() => {
-    loadLogs()
-  }, 5000)
-})
-
-onUnmounted(() => {
-  if (refreshTimer) {
-    clearInterval(refreshTimer)
-    refreshTimer = null
-  }
 })
 </script>

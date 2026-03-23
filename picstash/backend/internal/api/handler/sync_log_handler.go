@@ -139,11 +139,11 @@ func (h *SyncLogHandler) GetFileLogs(c fiber.Ctx) error {
 func (h *SyncLogHandler) getSyncLog(tx *sql.Tx, id int64) (*model.SyncLog, error) {
 	log := &model.SyncLog{}
 	err := tx.QueryRow(`
-		SELECT id, triggered_by, started_at, completed_at, status, total_files, processed_files, error_count, error_message
+		SELECT id, created_at, deleted_at, deleted, triggered_by, started_at, completed_at, status, total_files, processed_files, error_count, error_message
 		FROM sync_logs
-		WHERE id = ?
+		WHERE id = ? AND deleted = 0
 	`, id).Scan(
-		&log.ID, &log.TriggeredBy, &log.StartedAt, &log.CompletedAt,
+		&log.ID, &log.CreatedAt, &log.DeletedAt, &log.Deleted, &log.TriggeredBy, &log.StartedAt, &log.CompletedAt,
 		&log.Status, &log.TotalFiles, &log.ProcessedFiles, &log.ErrorCount, &log.ErrorMessage,
 	)
 	if err != nil {

@@ -44,21 +44,28 @@ func (r *tagRepository) Create(name, color string) (*model.Tag, error) {
 	}
 
 	tag := &model.Tag{
-		ID:        id,
-		Name:      name,
-		Color:     color,
-		CreatedAt: time.Now(),
+		BaseModel: model.BaseModel{
+			ID:        id,
+			CreatedAt: time.Now(),
+			Deleted:   model.DeleteStateNotDeleted,
+		},
+		Name:  name,
+		Color: color,
 	}
 	return tag, nil
 }
 
 func (r *tagRepository) Update(id int64, name, color string) (*model.Tag, error) {
-	_, err := r.tx.Exec(`UPDATE tags SET name = ?, color = ? WHERE id = ?`, name, color, id)
+	result, err := r.tx.Exec(`UPDATE tags SET name = ?, color = ? WHERE id = ? AND deleted = 0`, name, color, id)
 	if err != nil {
 		if isTagNameConflictError(err) {
 			return nil, ErrTagNameExists
 		}
 		return nil, fmt.Errorf("更新标签失败: %w", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, fmt.Errorf("标签不存在")
 	}
 
 	tag, err := r.GetByID(id)
@@ -69,7 +76,7 @@ func (r *tagRepository) Update(id int64, name, color string) (*model.Tag, error)
 }
 
 func (r *tagRepository) Delete(id int64) error {
-	result, err := r.tx.Exec(`DELETE FROM tags WHERE id = ?`, id)
+	result, err := r.tx.Exec(`UPDATE tags SET deleted = 1, deleted_at = ? WHERE id = ? AND deleted = 0`, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("删除标签失败: %w", err)
 	}
@@ -84,7 +91,11 @@ func (r *tagRepository) Delete(id int64) error {
 func (r *tagRepository) GetByID(id int64) (*model.Tag, error) {
 	tag := &model.Tag{}
 
-	err := r.tx.QueryRow(`SELECT id, name, color, created_at FROM tags WHERE id = ?`, id).Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt)
+	err := r.tx.QueryRow(`
+		SELECT id, name, color, created_at, deleted_at, deleted
+		FROM tags
+		WHERE id = ? AND deleted = 0
+	`, id).Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt, &tag.DeletedAt, &tag.Deleted)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("标签不存在")
@@ -95,7 +106,12 @@ func (r *tagRepository) GetByID(id int64) (*model.Tag, error) {
 }
 
 func (r *tagRepository) GetAll() ([]*model.Tag, error) {
-	rows, err := r.tx.Query(`SELECT id, name, color, created_at FROM tags ORDER BY created_at DESC`)
+	rows, err := r.tx.Query(`
+		SELECT id, name, color, created_at, deleted_at, deleted
+		FROM tags
+		WHERE deleted = 0
+		ORDER BY created_at DESC
+	`)
 	if err != nil {
 		return nil, fmt.Errorf("查询标签列表失败: %w", err)
 	}
@@ -104,7 +120,7 @@ func (r *tagRepository) GetAll() ([]*model.Tag, error) {
 	var tags []*model.Tag
 	for rows.Next() {
 		tag := &model.Tag{}
-		if err := rows.Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt); err != nil {
+		if err := rows.Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt, &tag.DeletedAt, &tag.Deleted); err != nil {
 			return nil, fmt.Errorf("扫描标签数据失败: %w", err)
 		}
 		tags = append(tags, tag)
@@ -114,10 +130,10 @@ func (r *tagRepository) GetAll() ([]*model.Tag, error) {
 
 func (r *tagRepository) GetByImageID(imageID int64) ([]*model.Tag, error) {
 	rows, err := r.tx.Query(`
-		SELECT t.id, t.name, t.color, t.created_at
+		SELECT t.id, t.name, t.color, t.created_at, t.deleted_at, t.deleted
 		FROM tags t
 		INNER JOIN image_tags it ON t.id = it.tag_id
-		WHERE it.image_id = ?
+		WHERE it.image_id = ? AND it.deleted = 0 AND t.deleted = 0
 		ORDER BY it.created_at DESC
 	`, imageID)
 	if err != nil {
@@ -128,7 +144,7 @@ func (r *tagRepository) GetByImageID(imageID int64) ([]*model.Tag, error) {
 	var tags []*model.Tag
 	for rows.Next() {
 		tag := &model.Tag{}
-		if err := rows.Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt); err != nil {
+		if err := rows.Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt, &tag.DeletedAt, &tag.Deleted); err != nil {
 			return nil, fmt.Errorf("扫描标签数据失败: %w", err)
 		}
 		tags = append(tags, tag)

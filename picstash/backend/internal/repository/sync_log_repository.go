@@ -27,9 +27,9 @@ func NewSyncLogRepository(tx *sql.Tx) SyncLogRepositoryInterface {
 
 func (r *syncLogRepository) CreateSyncLog(triggeredBy string, startedAt time.Time) (int64, error) {
 	result, err := r.tx.Exec(`
-		INSERT INTO sync_logs (triggered_by, started_at, status, total_files, processed_files, error_count)
-		VALUES (?, ?, 'running', 0, 0, 0)
-	`, triggeredBy, startedAt)
+		INSERT INTO sync_logs (triggered_by, started_at, created_at, status, total_files, processed_files, error_count)
+		VALUES (?, ?, ?, 'running', 0, 0, 0)
+	`, triggeredBy, startedAt, startedAt)
 	if err != nil {
 		return 0, fmt.Errorf("创建同步日志失败: %w", err)
 	}
@@ -44,7 +44,7 @@ func (r *syncLogRepository) UpdateSyncLog(id int64, completedAt *time.Time, tota
 	query := `
 		UPDATE sync_logs
 		SET completed_at = ?, total_files = ?, processed_files = ?, error_count = ?, error_message = ?, status = ?
-		WHERE id = ?
+		WHERE id = ? AND deleted = 0
 	`
 	_, err := r.tx.Exec(query, completedAt, totalFiles, processedFiles, errorCount, errorMessage, status, id)
 	if err != nil {
@@ -67,9 +67,9 @@ func (r *syncLogRepository) CreateSyncFileLog(syncLogID int64, path, action, sta
 
 func (r *syncLogRepository) GetSyncFilesByLogID(syncLogID int64) ([]*model.SyncFileLog, error) {
 	query := `
-		SELECT id, sync_log_id, path, action, status, sha, old_sha, size, old_size, error_message, created_at
+		SELECT id, created_at, deleted_at, deleted, sync_log_id, path, action, status, sha, old_sha, size, old_size, error_message
 		FROM sync_file_logs
-		WHERE sync_log_id = ?
+		WHERE sync_log_id = ? AND deleted = 0
 		ORDER BY created_at ASC
 	`
 	rows, err := r.tx.Query(query, syncLogID)
@@ -82,8 +82,8 @@ func (r *syncLogRepository) GetSyncFilesByLogID(syncLogID int64) ([]*model.SyncF
 	for rows.Next() {
 		log := &model.SyncFileLog{}
 		err := rows.Scan(
-			&log.ID, &log.SyncLogID, &log.Path, &log.Action, &log.Status,
-			&log.SHA, &log.OldSHA, &log.Size, &log.OldSize, &log.ErrorMessage, &log.CreatedAt,
+			&log.ID, &log.CreatedAt, &log.DeletedAt, &log.Deleted, &log.SyncLogID, &log.Path, &log.Action, &log.Status,
+			&log.SHA, &log.OldSHA, &log.Size, &log.OldSize, &log.ErrorMessage,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("扫描文件同步日志失败: %w", err)
@@ -96,8 +96,9 @@ func (r *syncLogRepository) GetSyncFilesByLogID(syncLogID int64) ([]*model.SyncF
 
 func (r *syncLogRepository) GetAllSyncLogs(limit, offset int) ([]*model.SyncLog, error) {
 	query := `
-		SELECT id, triggered_by, started_at, completed_at, status, total_files, processed_files, error_count, error_message
+		SELECT id, created_at, deleted_at, deleted, triggered_by, started_at, completed_at, status, total_files, processed_files, error_count, error_message
 		FROM sync_logs
+		WHERE deleted = 0
 		ORDER BY started_at DESC
 		LIMIT ? OFFSET ?
 	`
@@ -111,7 +112,7 @@ func (r *syncLogRepository) GetAllSyncLogs(limit, offset int) ([]*model.SyncLog,
 	for rows.Next() {
 		log := &model.SyncLog{}
 		err := rows.Scan(
-			&log.ID, &log.TriggeredBy, &log.StartedAt, &log.CompletedAt,
+			&log.ID, &log.CreatedAt, &log.DeletedAt, &log.Deleted, &log.TriggeredBy, &log.StartedAt, &log.CompletedAt,
 			&log.Status, &log.TotalFiles, &log.ProcessedFiles, &log.ErrorCount, &log.ErrorMessage,
 		)
 		if err != nil {
@@ -125,7 +126,7 @@ func (r *syncLogRepository) GetAllSyncLogs(limit, offset int) ([]*model.SyncLog,
 
 func (r *syncLogRepository) GetSyncLogCount() (int, error) {
 	var count int
-	err := r.tx.QueryRow("SELECT COUNT(*) FROM sync_logs").Scan(&count)
+	err := r.tx.QueryRow("SELECT COUNT(*) FROM sync_logs WHERE deleted = 0").Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("查询同步日志总数失败: %w", err)
 	}

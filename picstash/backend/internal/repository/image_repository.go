@@ -30,21 +30,72 @@ type imageRepository struct {
 	tx *sql.Tx
 }
 
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+const imageSelectFields = `
+		id, created_at, deleted_at, deleted,
+		path, url, sha,
+		thumbnail_path, thumbnail_url, thumbnail_sha,
+		watermark_path, watermark_url, watermark_sha, watermark_size,
+		original_filename, filename, size, thumbnail_size,
+		mime_type, width, height, has_thumbnail, has_watermark,
+		uploaded_at, thumbnail_width, thumbnail_height
+`
+
+const tagSelectFields = `
+		id, created_at, deleted_at, deleted, name, color
+`
+
+const tagSelectFieldsWithAlias = `
+		t.id, t.created_at, t.deleted_at, t.deleted, t.name, t.color
+`
+
 func NewImageRepository(tx *sql.Tx) ImageRepositoryInterface {
 	return &imageRepository{tx: tx}
 }
 
+func scanImage(scanner rowScanner, img *model.Image) error {
+	return scanner.Scan(
+		&img.ID, &img.CreatedAt, &img.DeletedAt, &img.Deleted,
+		&img.Path, &img.URL, &img.SHA,
+		&img.ThumbnailPath, &img.ThumbnailURL, &img.ThumbnailSHA,
+		&img.WatermarkPath, &img.WatermarkURL, &img.WatermarkSHA, &img.WatermarkSize,
+		&img.OriginalFilename, &img.Filename, &img.Size, &img.ThumbnailSize,
+		&img.MimeType, &img.Width, &img.Height, &img.HasThumbnail, &img.HasWatermark,
+		&img.UploadedAt, &img.ThumbnailWidth, &img.ThumbnailHeight,
+	)
+}
+
+func scanTag(scanner rowScanner, tag *model.Tag) error {
+	return scanner.Scan(
+		&tag.ID, &tag.CreatedAt, &tag.DeletedAt, &tag.Deleted, &tag.Name, &tag.Color,
+	)
+}
+
 func (r *imageRepository) CreateImage(image *model.Image) (int64, error) {
+	createdAt := image.CreatedAt
+	if createdAt.IsZero() {
+		if !image.UploadedAt.IsZero() {
+			createdAt = image.UploadedAt
+		} else {
+			createdAt = time.Now()
+		}
+	}
+
 	result, err := r.tx.Exec(`
 		INSERT INTO images (
+			created_at,
 			path, url, sha,
 			thumbnail_path, thumbnail_url, thumbnail_sha,
 			watermark_path, watermark_url, watermark_sha, watermark_size,
 			original_filename, filename, size, thumbnail_size,
 			mime_type, width, height, has_thumbnail, has_watermark,
 			thumbnail_width, thumbnail_height
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
+		createdAt,
 		image.Path, image.URL, image.SHA,
 		image.ThumbnailPath, image.ThumbnailURL, image.ThumbnailSHA,
 		image.WatermarkPath, image.WatermarkURL, image.WatermarkSHA, image.WatermarkSize,
@@ -54,6 +105,8 @@ func (r *imageRepository) CreateImage(image *model.Image) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("创建图片失败: %w", err)
 	}
+	image.CreatedAt = createdAt
+	image.Deleted = model.DeleteStateNotDeleted
 	id, err := result.LastInsertId()
 	if err != nil {
 		return 0, fmt.Errorf("获取图片ID失败: %w", err)
@@ -72,7 +125,7 @@ func (r *imageRepository) AddImageTags(imageID int64, tagIDs []int) error {
 }
 
 func (r *imageRepository) DeleteImageTags(imageID int64) error {
-	_, err := r.tx.Exec(`DELETE FROM image_tags WHERE image_id = ?`, imageID)
+	_, err := r.tx.Exec(`UPDATE image_tags SET deleted = 1, deleted_at = ? WHERE image_id = ? AND deleted = 0`, time.Now(), imageID)
 	if err != nil {
 		return fmt.Errorf("删除标签关联失败: %w", err)
 	}
@@ -81,19 +134,15 @@ func (r *imageRepository) DeleteImageTags(imageID int64) error {
 
 func (r *imageRepository) GetImagesByCursor(cursor *model.ImageListCursor, limit int, tagID *int) ([]*model.Image, error) {
 	var args []interface{}
-	query := `
-		SELECT id, path, url, sha,
-			   thumbnail_path, thumbnail_url, thumbnail_sha,
-			   watermark_path, watermark_url, watermark_sha, watermark_size,
-			   original_filename, filename, size, thumbnail_size,
-			   mime_type, width, height, has_thumbnail, has_watermark,
-			   uploaded_at, thumbnail_width, thumbnail_height
-		FROM images
-		WHERE deleted_at IS NULL
-	`
+	query := `SELECT ` + imageSelectFields + ` FROM images WHERE deleted = 0`
 
 	if tagID != nil {
-		query += ` AND id IN (SELECT image_id FROM image_tags WHERE tag_id = ?)`
+		query += ` AND id IN (
+			SELECT it.image_id
+			FROM image_tags it
+			INNER JOIN tags t ON t.id = it.tag_id
+			WHERE it.tag_id = ? AND it.deleted = 0 AND t.deleted = 0
+		)`
 		args = append(args, *tagID)
 	}
 
@@ -114,14 +163,7 @@ func (r *imageRepository) GetImagesByCursor(cursor *model.ImageListCursor, limit
 	var images []*model.Image
 	for rows.Next() {
 		img := &model.Image{}
-		err := rows.Scan(
-			&img.ID, &img.Path, &img.URL, &img.SHA,
-			&img.ThumbnailPath, &img.ThumbnailURL, &img.ThumbnailSHA,
-			&img.WatermarkPath, &img.WatermarkURL, &img.WatermarkSHA, &img.WatermarkSize,
-			&img.OriginalFilename, &img.Filename, &img.Size, &img.ThumbnailSize,
-			&img.MimeType, &img.Width, &img.Height, &img.HasThumbnail, &img.HasWatermark,
-			&img.UploadedAt, &img.ThumbnailWidth, &img.ThumbnailHeight,
-		)
+		err := scanImage(rows, img)
 		if err != nil {
 			return nil, fmt.Errorf("扫描图片数据失败: %w", err)
 		}
@@ -139,10 +181,19 @@ func (r *imageRepository) CountImages(tagID *int) (int, error) {
 	var countQuery string
 	var countArgs []interface{}
 	if tagID != nil {
-		countQuery = `SELECT COUNT(*) FROM images WHERE deleted_at IS NULL AND id IN (SELECT image_id FROM image_tags WHERE tag_id = ?)`
+		countQuery = `
+			SELECT COUNT(*)
+			FROM images
+			WHERE deleted = 0 AND id IN (
+				SELECT it.image_id
+				FROM image_tags it
+				INNER JOIN tags t ON t.id = it.tag_id
+				WHERE it.tag_id = ? AND it.deleted = 0 AND t.deleted = 0
+			)
+		`
 		countArgs = append(countArgs, *tagID)
 	} else {
-		countQuery = `SELECT COUNT(*) FROM images WHERE deleted_at IS NULL`
+		countQuery = `SELECT COUNT(*) FROM images WHERE deleted = 0`
 	}
 
 	var total int
@@ -157,23 +208,11 @@ func (r *imageRepository) CountImages(tagID *int) (int, error) {
 func (r *imageRepository) GetImageByID(id int64) (*model.Image, error) {
 	img := &model.Image{}
 
-	err := r.tx.QueryRow(`
-		SELECT id, path, url, sha,
-			   thumbnail_path, thumbnail_url, thumbnail_sha,
-			   watermark_path, watermark_url, watermark_sha, watermark_size,
-			   original_filename, filename, size, thumbnail_size,
-			   mime_type, width, height, has_thumbnail, has_watermark,
-			   uploaded_at, thumbnail_width, thumbnail_height
+	err := scanImage(r.tx.QueryRow(`
+		SELECT `+imageSelectFields+`
 		FROM images
-		WHERE id = ? AND deleted_at IS NULL
-	`, id).Scan(
-		&img.ID, &img.Path, &img.URL, &img.SHA,
-		&img.ThumbnailPath, &img.ThumbnailURL, &img.ThumbnailSHA,
-		&img.WatermarkPath, &img.WatermarkURL, &img.WatermarkSHA, &img.WatermarkSize,
-		&img.OriginalFilename, &img.Filename, &img.Size, &img.ThumbnailSize,
-		&img.MimeType, &img.Width, &img.Height, &img.HasThumbnail, &img.HasWatermark,
-		&img.UploadedAt, &img.ThumbnailWidth, &img.ThumbnailHeight,
-	)
+		WHERE id = ? AND deleted = 0
+	`, id), img)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("图片不存在")
@@ -182,10 +221,10 @@ func (r *imageRepository) GetImageByID(id int64) (*model.Image, error) {
 	}
 
 	rows, err := r.tx.Query(`
-		SELECT t.id, t.name, t.color, t.created_at
+		SELECT `+tagSelectFieldsWithAlias+`
 		FROM tags t
 		INNER JOIN image_tags it ON t.id = it.tag_id
-		WHERE it.image_id = ?
+		WHERE it.image_id = ? AND it.deleted = 0 AND t.deleted = 0
 		ORDER BY it.created_at DESC
 	`, id)
 	if err != nil {
@@ -195,7 +234,7 @@ func (r *imageRepository) GetImageByID(id int64) (*model.Image, error) {
 
 	for rows.Next() {
 		tag := &model.Tag{}
-		if err := rows.Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt); err != nil {
+		if err := scanTag(rows, tag); err != nil {
 			continue
 		}
 		img.Tags = append(img.Tags, *tag)
@@ -205,7 +244,7 @@ func (r *imageRepository) GetImageByID(id int64) (*model.Image, error) {
 }
 
 func (r *imageRepository) SoftDeleteImage(id int64) error {
-	_, err := r.tx.Exec(`UPDATE images SET deleted_at = ? WHERE id = ?`, time.Now(), id)
+	_, err := r.tx.Exec(`UPDATE images SET deleted = 1, deleted_at = ? WHERE id = ? AND deleted = 0`, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("删除图片失败: %w", err)
 	}
@@ -213,7 +252,7 @@ func (r *imageRepository) SoftDeleteImage(id int64) error {
 }
 
 func (r *imageRepository) UpdateImageTags(imageID int64, tagIDs []int) error {
-	_, err := r.tx.Exec(`DELETE FROM image_tags WHERE image_id = ?`, imageID)
+	_, err := r.tx.Exec(`UPDATE image_tags SET deleted = 1, deleted_at = ? WHERE image_id = ? AND deleted = 0`, time.Now(), imageID)
 	if err != nil {
 		return fmt.Errorf("删除旧标签失败: %w", err)
 	}
@@ -229,10 +268,10 @@ func (r *imageRepository) UpdateImageTags(imageID int64, tagIDs []int) error {
 
 func (r *imageRepository) GetTagsByImageID(imageID int64) ([]*model.Tag, error) {
 	rows, err := r.tx.Query(`
-		SELECT t.id, t.name, t.color, t.created_at
+		SELECT `+tagSelectFieldsWithAlias+`
 		FROM tags t
 		INNER JOIN image_tags it ON t.id = it.tag_id
-		WHERE it.image_id = ?
+		WHERE it.image_id = ? AND it.deleted = 0 AND t.deleted = 0
 		ORDER BY it.created_at DESC
 	`, imageID)
 	if err != nil {
@@ -243,7 +282,7 @@ func (r *imageRepository) GetTagsByImageID(imageID int64) ([]*model.Tag, error) 
 	var tags []*model.Tag
 	for rows.Next() {
 		tag := &model.Tag{}
-		if err := rows.Scan(&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt); err != nil {
+		if err := scanTag(rows, tag); err != nil {
 			continue
 		}
 		tags = append(tags, tag)
@@ -281,10 +320,10 @@ func (r *imageRepository) loadImageTags(images []*model.Image) error {
 	}
 
 	tagRows, err := r.tx.Query(`
-		SELECT it.image_id, t.id, t.name, t.color, t.created_at
+		SELECT it.image_id, `+tagSelectFieldsWithAlias+`
 		FROM tags t
 		INNER JOIN image_tags it ON t.id = it.tag_id
-		WHERE it.image_id IN (`+placeholders(len(imageIDs))+`)
+		WHERE it.image_id IN (`+placeholders(len(imageIDs))+`) AND it.deleted = 0 AND t.deleted = 0
 	`, int64sToInterfaces(imageIDs...)...)
 	if err != nil {
 		return fmt.Errorf("查询图片标签失败: %w", err)
@@ -295,7 +334,7 @@ func (r *imageRepository) loadImageTags(images []*model.Image) error {
 	for tagRows.Next() {
 		var imageID int64
 		var tag model.Tag
-		if err := tagRows.Scan(&imageID, &tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt); err != nil {
+		if err := tagRows.Scan(&imageID, &tag.ID, &tag.CreatedAt, &tag.DeletedAt, &tag.Deleted, &tag.Name, &tag.Color); err != nil {
 			continue
 		}
 		tagMap[imageID] = append(tagMap[imageID], tag)
@@ -309,16 +348,7 @@ func (r *imageRepository) loadImageTags(images []*model.Image) error {
 }
 
 func (r *imageRepository) GetAllImagesNotDeleted() ([]*model.Image, error) {
-	query := `
-		SELECT id, path, url, sha,
-			   thumbnail_path, thumbnail_url, thumbnail_sha,
-			   watermark_path, watermark_url, watermark_sha, watermark_size,
-			   original_filename, filename, size, thumbnail_size,
-			   mime_type, width, height, has_thumbnail, has_watermark,
-			   uploaded_at, thumbnail_width, thumbnail_height
-		FROM images
-		WHERE deleted_at IS NULL
-	`
+	query := `SELECT ` + imageSelectFields + ` FROM images WHERE deleted = 0`
 	rows, err := r.tx.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("查询所有图片失败: %w", err)
@@ -328,14 +358,7 @@ func (r *imageRepository) GetAllImagesNotDeleted() ([]*model.Image, error) {
 	var images []*model.Image
 	for rows.Next() {
 		img := &model.Image{}
-		err := rows.Scan(
-			&img.ID, &img.Path, &img.URL, &img.SHA,
-			&img.ThumbnailPath, &img.ThumbnailURL, &img.ThumbnailSHA,
-			&img.WatermarkPath, &img.WatermarkURL, &img.WatermarkSHA, &img.WatermarkSize,
-			&img.OriginalFilename, &img.Filename, &img.Size, &img.ThumbnailSize,
-			&img.MimeType, &img.Width, &img.Height, &img.HasThumbnail, &img.HasWatermark,
-			&img.UploadedAt, &img.ThumbnailWidth, &img.ThumbnailHeight,
-		)
+		err := scanImage(rows, img)
 		if err != nil {
 			return nil, fmt.Errorf("扫描图片数据失败: %w", err)
 		}
@@ -347,23 +370,11 @@ func (r *imageRepository) GetAllImagesNotDeleted() ([]*model.Image, error) {
 
 func (r *imageRepository) FindByPath(path string) (*model.Image, error) {
 	img := &model.Image{}
-	err := r.tx.QueryRow(`
-		SELECT id, path, url, sha,
-			   thumbnail_path, thumbnail_url, thumbnail_sha,
-			   watermark_path, watermark_url, watermark_sha, watermark_size,
-			   original_filename, filename, size, thumbnail_size,
-			   mime_type, width, height, has_thumbnail, has_watermark,
-			   uploaded_at, thumbnail_width, thumbnail_height
+	err := scanImage(r.tx.QueryRow(`
+		SELECT `+imageSelectFields+`
 		FROM images
-		WHERE path = ? AND deleted_at IS NULL
-	`, path).Scan(
-		&img.ID, &img.Path, &img.URL, &img.SHA,
-		&img.ThumbnailPath, &img.ThumbnailURL, &img.ThumbnailSHA,
-		&img.WatermarkPath, &img.WatermarkURL, &img.WatermarkSHA, &img.WatermarkSize,
-		&img.OriginalFilename, &img.Filename, &img.Size, &img.ThumbnailSize,
-		&img.MimeType, &img.Width, &img.Height, &img.HasThumbnail, &img.HasWatermark,
-		&img.UploadedAt, &img.ThumbnailWidth, &img.ThumbnailHeight,
-	)
+		WHERE path = ? AND deleted = 0
+	`, path), img)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -374,7 +385,7 @@ func (r *imageRepository) FindByPath(path string) (*model.Image, error) {
 }
 
 func (r *imageRepository) UpdateImageMeta(id int64, sha string, size *int64, width *int, height *int) error {
-	_, err := r.tx.Exec(`UPDATE images SET sha = ?, size = ?, width = ?, height = ? WHERE id = ?`, sha, size, width, height, id)
+	_, err := r.tx.Exec(`UPDATE images SET sha = ?, size = ?, width = ?, height = ? WHERE id = ? AND deleted = 0`, sha, size, width, height, id)
 	if err != nil {
 		return fmt.Errorf("更新图片元数据失败: %w", err)
 	}
@@ -385,7 +396,7 @@ func (r *imageRepository) UpdateThumbnailMeta(id int64, thumbnailPath, thumbnail
 	_, err := r.tx.Exec(`
 		UPDATE images
 		SET thumbnail_path = ?, thumbnail_url = ?, thumbnail_sha = ?, thumbnail_size = ?, has_thumbnail = 1, thumbnail_width = ?, thumbnail_height = ?
-		WHERE id = ?
+		WHERE id = ? AND deleted = 0
 	`, thumbnailPath, thumbnailURL, thumbnailSHA, thumbnailSize, thumbnailWidth, thumbnailHeight, id)
 	if err != nil {
 		return fmt.Errorf("更新缩略图元数据失败: %w", err)
@@ -397,7 +408,7 @@ func (r *imageRepository) UpdateWatermarkMeta(id int64, watermarkPath, watermark
 	_, err := r.tx.Exec(`
 		UPDATE images
 		SET watermark_path = ?, watermark_url = ?, watermark_sha = ?, watermark_size = ?, has_watermark = 1
-		WHERE id = ?
+		WHERE id = ? AND deleted = 0
 	`, watermarkPath, watermarkURL, watermarkSHA, watermarkSize, id)
 	if err != nil {
 		return fmt.Errorf("更新水印图元数据失败: %w", err)
@@ -407,8 +418,8 @@ func (r *imageRepository) UpdateWatermarkMeta(id int64, watermarkPath, watermark
 
 func (r *imageRepository) GetOrCreateSyncTag() (*model.Tag, error) {
 	tag := &model.Tag{}
-	err := r.tx.QueryRow(`SELECT id, name, color, created_at FROM tags WHERE name = '同步'`).Scan(
-		&tag.ID, &tag.Name, &tag.Color, &tag.CreatedAt,
+	err := r.tx.QueryRow(`SELECT `+tagSelectFields+` FROM tags WHERE name = '同步' AND deleted = 0`).Scan(
+		&tag.ID, &tag.CreatedAt, &tag.DeletedAt, &tag.Deleted, &tag.Name, &tag.Color,
 	)
 	if err == nil {
 		return tag, nil
@@ -427,6 +438,7 @@ func (r *imageRepository) GetOrCreateSyncTag() (*model.Tag, error) {
 	}
 
 	tag.ID = id
+	tag.Deleted = model.DeleteStateNotDeleted
 	tag.Name = "同步"
 	tag.Color = "#9CA3AF"
 	tag.CreatedAt = time.Now()

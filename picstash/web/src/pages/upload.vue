@@ -3,28 +3,6 @@
     <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-md p-8">
       <h1 class="text-2xl font-bold mb-6">上传图片</h1>
 
-      <div v-if="authStore.isAuthenticated" class="mb-4 flex items-center gap-3">
-        <button
-          @click="handleSync"
-          :disabled="syncing"
-          class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-        >
-          <span v-if="syncing">同步中...</span>
-          <span v-else>从存储同步</span>
-        </button>
-        <router-link
-          to="/sync"
-          class="text-primary hover:underline text-sm"
-        >
-          查看同步日志
-        </router-link>
-      </div>
-
-      <div v-if="syncTask" class="mb-4 p-3 bg-blue-50 rounded-lg text-sm">
-        <p class="font-medium mb-1">⏳ {{ syncTask.started ? '同步任务已开始' : '同步任务进行中' }}</p>
-        <p>日志ID: {{ syncTask.log_id }}，可前往“查看同步日志”追踪进度</p>
-      </div>
-
       <form @submit.prevent="handleUpload">
         <div class="mb-6">
           <label class="block text-gray-700 mb-2">选择文件</label>
@@ -72,37 +50,26 @@
         </div>
 
         <div class="mb-6">
-          <button
-            type="button"
-            @click="showWatermarkSettings = !showWatermarkSettings"
-            class="flex items-center gap-2 text-gray-700 hover:text-gray-900 px-3 py-2 rounded-lg hover:bg-gray-100 transition cursor-pointer"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            水印设置
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 transition-transform" :class="{ 'rotate-180': showWatermarkSettings }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-
-          <div v-if="showWatermarkSettings" class="mt-4 p-4 bg-gray-50 rounded-lg">
-            <div class="mb-4">
-              <label class="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  v-model="watermarkConfig.enabled"
-                  @change="updateMainPreview"
-                  class="w-4 h-4"
-                />
-                <span class="text-gray-700">启用水印</span>
-              </label>
-            </div>
-
-            <div class="mb-4">
-              <label class="block text-gray-700 mb-1">水印文字</label>
+          <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+            <label class="flex items-start justify-between gap-4">
+              <div>
+                <div class="text-sm font-medium text-gray-900">启用水印</div>
+                <p class="mt-1 text-sm text-gray-500">
+                  开启后会展示水印设置，并在预览与上传结果中应用水印。
+                </p>
+              </div>
               <input
+                type="checkbox"
+                v-model="watermarkConfig.enabled"
+                @change="updateMainPreview"
+                class="mt-1 h-4 w-4 flex-shrink-0"
+              />
+            </label>
+
+            <div v-if="watermarkConfig.enabled" class="mt-4 rounded-lg bg-white p-4">
+              <div class="mb-4">
+                <label class="block text-gray-700 mb-1">水印文字</label>
+                <input
                 type="text"
                 v-model="watermarkConfig.text"
                 @input="updateMainPreview"
@@ -222,6 +189,7 @@
             </div>
           </div>
         </div>
+        </div>
 
         <div class="mb-6">
           <TagPicker
@@ -263,14 +231,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
 import { imagesApi } from '@/api'
-import type { WatermarkConfig, SyncStartResult } from '@/types'
+import type { WatermarkConfig } from '@/types'
 import { defaultWatermarkConfig } from '@/types'
 import { loadWatermarkConfig, saveWatermarkConfig } from '@/utils/storage'
 import { createWatermarkCanvas, canvasToBlob, getImageDimensions } from '@/utils/watermark'
 import TagPicker from '@/components/tag/TagPicker.vue'
-import { useNotifications } from '@/utils/notification'
 
 interface FileWithPreview extends File {
   previewUrl?: string
@@ -281,8 +247,6 @@ interface FileWithPreview extends File {
 }
 
 const router = useRouter()
-const authStore = useAuthStore()
-const { notifyError, notifyInfo, notifySuccess } = useNotifications()
 
 const files = ref<FileWithPreview[]>([])
 const selectedTags = ref<string[]>([])
@@ -293,10 +257,6 @@ const uploadMessageType = ref('text-green-600')
 const uploadProgress = ref<number>(0)
 const objectUrls: string[] = []
 
-const syncing = ref(false)
-const syncTask = ref<SyncStartResult | null>(null)
-
-const showWatermarkSettings = ref(false)
 const watermarkConfig = ref<WatermarkConfig>({ ...defaultWatermarkConfig })
 const mainPreviewCanvas = ref<HTMLCanvasElement | null>(null)
 const selectedIndex = ref(0)
@@ -310,25 +270,6 @@ const getPreviewUrl = (file: File): string => {
 const revokePreviewUrls = () => {
   objectUrls.forEach(url => URL.revokeObjectURL(url))
   objectUrls.length = 0
-}
-
-const handleSync = async () => {
-  syncing.value = true
-  syncTask.value = null
-  try {
-    const res = await imagesApi.sync()
-    syncTask.value = res.data.data as SyncStartResult
-    if (syncTask.value.started) {
-      notifySuccess('同步任务已开始，请在同步日志页查看进度')
-    } else {
-      notifyInfo('已有同步任务在进行中，请在同步日志页查看进度')
-    }
-  } catch (error) {
-    console.error('同步失败:', error)
-    notifyError('同步失败')
-  } finally {
-    syncing.value = false
-  }
 }
 
 onMounted(() => {

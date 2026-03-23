@@ -39,7 +39,7 @@ func (s *VerificationCodeService) Verify(email, code string) (bool, error) {
 	err := s.db.QueryRow(`
 		SELECT expires_at, used_at
 		FROM verification_codes
-		WHERE email = ? AND code = ?
+		WHERE email = ? AND code = ? AND deleted = 0
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, email, code).Scan(&expiresAt, &usedAt)
@@ -58,7 +58,7 @@ func (s *VerificationCodeService) Verify(email, code string) (bool, error) {
 		return false, nil
 	}
 
-	_, err = s.db.Exec(`UPDATE verification_codes SET used_at = ? WHERE email = ? AND code = ?`, time.Now(), email, code)
+	_, err = s.db.Exec(`UPDATE verification_codes SET used_at = ? WHERE email = ? AND code = ? AND deleted = 0`, time.Now(), email, code)
 	if err != nil {
 		return false, fmt.Errorf("标记验证码已使用失败: %w", err)
 	}
@@ -72,7 +72,7 @@ func (s *VerificationCodeService) CanSendCode(email string) (bool, error) {
 	err := s.db.QueryRow(`
 		SELECT created_at
 		FROM verification_codes
-		WHERE email = ?
+		WHERE email = ? AND deleted = 0
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, email).Scan(&lastSentAt)
@@ -92,7 +92,12 @@ func (s *VerificationCodeService) CanSendCode(email string) (bool, error) {
 }
 
 func (s *VerificationCodeService) CleanupExpired() error {
-	result, err := s.db.Exec(`DELETE FROM verification_codes WHERE expires_at < ?`, time.Now())
+	now := time.Now()
+	result, err := s.db.Exec(`
+		UPDATE verification_codes
+		SET deleted = 1, deleted_at = ?
+		WHERE expires_at < ? AND deleted = 0
+	`, now, now)
 	if err != nil {
 		return fmt.Errorf("清理过期验证码失败: %w", err)
 	}

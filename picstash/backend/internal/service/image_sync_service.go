@@ -555,7 +555,12 @@ func (s *ImageSyncService) createImageFromStorage(ctx context.Context, storageFi
 		}
 	}
 
+	createdAt := time.Now()
 	image := &model.Image{
+		BaseModel: model.BaseModel{
+			CreatedAt: createdAt,
+			Deleted:   model.DeleteStateNotDeleted,
+		},
 		Path:             storageFile.Path,
 		URL:              s.storage.GetURL(ctx, storageFile.Path),
 		SHA:              storageFile.SHA,
@@ -567,7 +572,7 @@ func (s *ImageSyncService) createImageFromStorage(ctx context.Context, storageFi
 		Height:           &height,
 		HasThumbnail:     false,
 		HasWatermark:     false,
-		UploadedAt:       time.Now(),
+		UploadedAt:       createdAt,
 	}
 
 	id, err := imageRepo.CreateImage(image)

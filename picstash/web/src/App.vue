@@ -12,6 +12,7 @@
             </router-link>
             <template v-else>
               <router-link to="/upload" class="text-gray-700 hover:text-primary">上传</router-link>
+              <router-link to="/sync" class="text-gray-700 hover:text-primary">从存储同步 ✨</router-link>
               <router-link to="/tags" class="text-gray-700 hover:text-primary">标签</router-link>
               <button @click="authStore.logout" class="text-gray-700 hover:text-danger">
                 退出
