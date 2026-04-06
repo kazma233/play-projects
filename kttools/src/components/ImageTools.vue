@@ -120,8 +120,14 @@
                   <n-text depth="3">{{ selectedImage.width }} x {{ selectedImage.height }}</n-text>
                 </n-flex>
                 <div class="image-viewer">
-                  <n-image v-if="originalImageUrl" :src="originalImageUrl" alt="原图" object-fit="contain" width="100%"
-                    height="100%" />
+                  <n-image
+                    v-if="originalImageUrl"
+                    class="image-viewer__media"
+                    :img-props="{ class: 'image-viewer__asset' }"
+                    :src="originalImageUrl"
+                    alt="原图"
+                    object-fit="contain"
+                  />
                   <n-spin v-else-if="previewLoading" />
                   <n-text v-else depth="3">加载中...</n-text>
                 </div>
@@ -138,8 +144,14 @@
                   <n-text depth="3" class="image-compression-meta">{{ compressionInfo }}</n-text>
                 </n-flex>
                 <div class="image-viewer">
-                  <n-image v-if="processedImageUrl" :src="processedImageUrl" alt="处理后" object-fit="contain" width="100%"
-                    height="100%" />
+                  <n-image
+                    v-if="processedImageUrl"
+                    class="image-viewer__media"
+                    :img-props="{ class: 'image-viewer__asset' }"
+                    :src="processedImageUrl"
+                    alt="处理后"
+                    object-fit="contain"
+                  />
                   <n-flex v-else-if="processing" vertical align="center" :gap="8">
                     <n-spin />
                     <n-text depth="3">处理中...</n-text>
@@ -163,7 +175,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { NButton, NButtonGroup, NSlider, NSpin, NEmpty, NText, NFlex, NSpace, NScrollbar, NEllipsis, NImage, NCard, NSplit, useMessage, useDialog } from 'naive-ui'
 import { invoke } from "@tauri-apps/api/core"
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -207,7 +219,10 @@ const processedData = ref(null)
 const processedDimensions = ref(null)
 const processedImageUrl = ref('')
 let previewRequestId = 0
+let processRequestId = 0
+let autoProcessTimer = null
 const viewportWidth = ref(0)
+const AUTO_PROCESS_DELAY = 180
 
 const stackedPreview = computed(() => viewportWidth.value <= 1180)
 
@@ -283,6 +298,18 @@ const revokeImagePreview = (img) => {
   img.previewLoaded = false
 }
 
+const clearAutoProcessTimer = () => {
+  if (!autoProcessTimer) return
+  clearTimeout(autoProcessTimer)
+  autoProcessTimer = null
+}
+
+const invalidateProcessedPreview = () => {
+  processRequestId++
+  clearAutoProcessTimer()
+  processing.value = false
+}
+
 const resetProcessedState = () => {
   processedData.value = null
   processedDimensions.value = null
@@ -317,6 +344,7 @@ const clearCachedImages = () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncViewport)
+  invalidateProcessedPreview()
   clearCachedImages()
   resetProcessedState()
 })
@@ -344,6 +372,7 @@ const addImages = async () => {
 }
 
 const selectImage = async (idx) => {
+  invalidateProcessedPreview()
   selectedIndex.value = idx
   const currentRequestId = ++previewRequestId
   resetProcessedState()
@@ -351,6 +380,7 @@ const selectImage = async (idx) => {
 
   const img = images.value[idx]
   if (!img || !img.path) return
+  queueProcessedPreviewRefresh()
 
   if (img.previewLoaded && img.previewUrl) {
     previewLoading.value = false
@@ -388,37 +418,72 @@ const selectImage = async (idx) => {
   }
 }
 
-const processImage = async () => {
-  if (!selectedImage.value) return
+const processImage = async ({ notifySuccess = true } = {}) => {
+  const targetImage = selectedImage.value
+  if (!targetImage) return
+
+  clearAutoProcessTimer()
+  const currentRequestId = ++processRequestId
+  const targetFormat = outputFormat.value
+  const targetQuality = quality.value
+  const targetScale = scale.value
+  const targetWebpLossless = webpLossless.value
 
   processing.value = true
   resetProcessedState()
 
   try {
     const result = await invoke('process_image', {
-      path: selectedImage.value.path,
-      format: outputFormat.value,
-      quality: quality.value,
-      scale: scale.value,
-      webpLossless: webpLossless.value
+      path: targetImage.path,
+      format: targetFormat,
+      quality: targetQuality,
+      scale: targetScale,
+      webpLossless: targetWebpLossless
     })
+
+    if (currentRequestId !== processRequestId || selectedImage.value?.path !== targetImage.path) {
+      return
+    }
 
     processedData.value = new Uint8Array(result.data)
     processedDimensions.value = { width: result.width, height: result.height }
 
-    const mimeType = outputFormat.value === 'Jpg' ? 'image/jpeg' :
-      outputFormat.value === 'WebP' ? 'image/webp' : 'image/png'
+    const mimeType = targetFormat === 'Jpg' ? 'image/jpeg' :
+      targetFormat === 'WebP' ? 'image/webp' : 'image/png'
     const blob = new Blob([processedData.value], { type: mimeType })
     processedImageUrl.value = URL.createObjectURL(blob)
 
     images.value[selectedIndex.value].processed = true
     images.value[selectedIndex.value].error = null
-    message.success('处理完成')
+
+    if (notifySuccess) {
+      message.success('处理完成')
+    }
   } catch (e) {
+    if (currentRequestId !== processRequestId || selectedImage.value?.path !== targetImage.path) {
+      return
+    }
     message.error('处理失败: ' + e)
   } finally {
-    processing.value = false
+    if (currentRequestId === processRequestId && selectedImage.value?.path === targetImage.path) {
+      processing.value = false
+    }
   }
+}
+
+const queueProcessedPreviewRefresh = () => {
+  clearAutoProcessTimer()
+
+  if (!selectedImage.value?.path) return
+
+  processRequestId++
+  resetProcessedState()
+  processing.value = true
+
+  autoProcessTimer = window.setTimeout(() => {
+    autoProcessTimer = null
+    processImage({ notifySuccess: false })
+  }, AUTO_PROCESS_DELAY)
 }
 
 const saveImage = async () => {
@@ -509,6 +574,7 @@ const clearAll = () => {
     positiveText: '确定',
     negativeText: '取消',
     onPositiveClick: () => {
+      invalidateProcessedPreview()
       clearCachedImages()
       previewRequestId++
       previewLoading.value = false
@@ -519,6 +585,20 @@ const clearAll = () => {
     }
   })
 }
+
+watch(
+  [
+    outputFormat,
+    quality,
+    scale,
+    webpLossless
+  ],
+  () => {
+    if (selectedImage.value?.path) {
+      queueProcessedPreviewRefresh()
+    }
+  }
+)
 </script>
 
 <style scoped>
@@ -715,6 +795,26 @@ const clearAll = () => {
   padding: clamp(0.75rem, 1.6vw, 1rem);
   background: linear-gradient(145deg, rgba(243, 210, 193, 0.22), rgba(255, 255, 255, 0.82));
   border-radius: 18px;
+  overflow: hidden;
+}
+
+.image-viewer :deep(.image-viewer__media) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 100%;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+.image-viewer :deep(.image-viewer__asset) {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  max-inline-size: 100%;
+  max-block-size: 100%;
+  object-fit: contain;
 }
 
 /* ========== 空状态 ========== */

@@ -1,7 +1,7 @@
 <template>
-  <div class="page-view">
+  <div class="page-view code-duplex-page">
     <n-card class="tool-surface tool-surface--fill" size="small" :bordered="false">
-      <n-split class="tool-split tool-split-frame" direction="vertical" :default-size="0.52">
+      <n-split class="tool-split tool-split-frame" direction="vertical" :default-size="0.5">
         <template #1>
           <div class="tool-panel">
             <div class="tool-panel__header">
@@ -86,3 +86,9 @@ const swap = () => {
   urlArgs.value.decode = temp
 }
 </script>
+
+<style scoped>
+.code-duplex-page {
+  --tool-textarea-min-height: clamp(7.5rem, 20vh, 10rem);
+}
+</style>

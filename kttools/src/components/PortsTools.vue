@@ -1,6 +1,6 @@
 <template>
-  <div class="page-view">
-    <n-card class="tool-surface" size="small" :bordered="false">
+  <div class="page-view ports-page">
+    <n-card class="tool-surface ports-toolbar-card" size="small" :bordered="false">
       <div class="tool-panel__header ports-toolbar">
         <div class="tool-panel__title">
           <strong>实时连接视图</strong>
@@ -35,7 +35,11 @@
     </n-card>
 
     <n-card class="tool-surface tool-surface--fill ports-table-card" size="small" :bordered="false">
-      <div v-if="!loading && filteredPorts.length > 0" class="ports-table-wrap">
+      <div
+        v-if="!loading && filteredPorts.length > 0"
+        class="ports-table-wrap"
+        :class="{ 'ports-table-wrap--table': !useCardView }"
+      >
         <div v-if="useCardView" class="ports-card-list">
           <article v-for="row in filteredPorts" :key="getRowKey(row)" class="ports-card">
             <div class="ports-card__header">
@@ -93,6 +97,7 @@
 
         <n-data-table
           v-else
+          class="ports-data-table"
           :columns="columns"
           :data="filteredPorts"
           :row-key="getRowKey"
@@ -173,11 +178,15 @@ const statusTagTypeMap = {
 const useCardView = computed(() => viewportWidth.value <= 980)
 const tableScrollX = 1158
 const tableMaxHeight = computed(() => {
+  if (useCardView.value) {
+    return undefined
+  }
+
   if (!viewportHeight.value) {
     return 520
   }
 
-  return Math.round(Math.min(720, Math.max(320, viewportHeight.value * 0.56)))
+  return Math.round(Math.min(960, Math.max(360, viewportHeight.value - 320)))
 })
 
 const statusOptions = computed(() => {
@@ -433,6 +442,15 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
+.ports-page {
+  min-height: 0;
+  overflow: auto;
+}
+
+.ports-toolbar-card {
+  flex-shrink: 0;
+}
+
 .ports-toolbar {
   align-items: flex-start;
 }
@@ -444,13 +462,21 @@ onBeforeUnmount(() => {
 
 .ports-table-card {
   display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .ports-table-wrap {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   min-height: 0;
   overflow: auto;
+}
+
+.ports-table-wrap--table {
+  overflow: hidden;
 }
 
 .ports-table-card .n-card__content {
@@ -459,8 +485,11 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.ports-data-table,
 .ports-table-card .n-data-table {
   width: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 .ports-table-card .n-data-table-base-table-body {
@@ -474,6 +503,7 @@ onBeforeUnmount(() => {
 .ports-card-list {
   display: grid;
   gap: 1rem;
+  align-content: start;
 }
 
 .ports-card {
