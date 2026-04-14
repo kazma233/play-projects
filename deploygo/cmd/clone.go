@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"log"
-	"path/filepath"
 
+	"deploygo/internal/fileutil"
 	"deploygo/internal/git"
 
 	"github.com/spf13/cobra"
@@ -26,7 +26,7 @@ var CloneCmd = &cobra.Command{
 			log.Fatalf("No clone configuration found for project '%s'. Please configure 'clone.url' in config.yaml", projectCtx.Name)
 		}
 
-		sourceDir := filepath.Join(basicPath, "source")
+		sourceDir := fileutil.SourceDir(basicPath)
 
 		log.Printf("Project: %s", projectCtx.Name)
 		log.Printf("Git URL: %s", cfg.Clone.URL)

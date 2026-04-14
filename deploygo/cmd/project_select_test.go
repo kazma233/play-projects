@@ -2,15 +2,15 @@ package cmd
 
 import (
 	"bytes"
+	"deploygo/internal/config"
+	"deploygo/internal/fileutil"
 	"errors"
 	"strings"
 	"testing"
-
-	"deploygo/internal/config"
 )
 
 func TestChooseProjectNameKeepsExplicitProject(t *testing.T) {
-	selected, err := chooseProjectName("demo", config.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
+	selected, err := chooseProjectName("demo", fileutil.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
 		return nil, errors.New("should not be called")
 	}, true, strings.NewReader(""), &bytes.Buffer{})
 	if err != nil {
@@ -22,7 +22,7 @@ func TestChooseProjectNameKeepsExplicitProject(t *testing.T) {
 }
 
 func TestChooseProjectNameNoProjects(t *testing.T) {
-	_, err := chooseProjectName("", config.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
+	_, err := chooseProjectName("", fileutil.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
 		return nil, nil
 	}, true, strings.NewReader(""), &bytes.Buffer{})
 	if err == nil {
@@ -36,7 +36,7 @@ func TestChooseProjectNameNoProjects(t *testing.T) {
 func TestChooseProjectNameAutoSelectsSingleProject(t *testing.T) {
 	var output bytes.Buffer
 
-	selected, err := chooseProjectName("", config.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
+	selected, err := chooseProjectName("", fileutil.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
 		return []config.ConfigInfo{{DirName: "demo"}}, nil
 	}, true, strings.NewReader(""), &output)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestChooseProjectNameAutoSelectsSingleProject(t *testing.T) {
 }
 
 func TestChooseProjectNameErrorsInNonInteractiveMode(t *testing.T) {
-	_, err := chooseProjectName("", config.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
+	_, err := chooseProjectName("", fileutil.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
 		return []config.ConfigInfo{{DirName: "alpha"}, {DirName: "beta"}}, nil
 	}, false, strings.NewReader(""), &bytes.Buffer{})
 	if err == nil {
@@ -68,7 +68,7 @@ func TestChooseProjectNameErrorsInNonInteractiveMode(t *testing.T) {
 func TestChooseProjectNamePromptsForSelection(t *testing.T) {
 	var output bytes.Buffer
 
-	selected, err := chooseProjectName("", config.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
+	selected, err := chooseProjectName("", fileutil.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
 		return []config.ConfigInfo{{DirName: "alpha"}, {DirName: "beta"}}, nil
 	}, true, strings.NewReader("2\n"), &output)
 	if err != nil {
@@ -88,7 +88,7 @@ func TestChooseProjectNamePromptsForSelection(t *testing.T) {
 func TestChooseProjectNameRepromptsAfterInvalidSelection(t *testing.T) {
 	var output bytes.Buffer
 
-	selected, err := chooseProjectName("", config.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
+	selected, err := chooseProjectName("", fileutil.WorkspaceDir, func(string) ([]config.ConfigInfo, error) {
 		return []config.ConfigInfo{{DirName: "alpha"}, {DirName: "beta"}}, nil
 	}, true, strings.NewReader("9\n1\n"), &output)
 	if err != nil {

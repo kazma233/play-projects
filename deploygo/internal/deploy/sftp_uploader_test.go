@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"deploygo/internal/fileutil"
 )
 
 func TestRemoteTempPath(t *testing.T) {
@@ -20,6 +22,11 @@ func TestRemoteTempPath(t *testing.T) {
 			want: "/opt/app/.app.tar.gz-0.tmp",
 		},
 		{
+			name: "root directory path",
+			dest: "/artifact.tgz",
+			want: "/.artifact.tgz-0.tmp",
+		},
+		{
 			name: "relative path",
 			dest: "release/app.tar.gz",
 			want: "release/.app.tar.gz-0.tmp",
@@ -33,7 +40,7 @@ func TestRemoteTempPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := remoteTempPath(tt.dest, now)
+			got := fileutil.RemoteTempPath(tt.dest, now)
 			if got != tt.want {
 				t.Fatalf("remoteTempPath(%q) = %q, want %q", tt.dest, got, tt.want)
 			}

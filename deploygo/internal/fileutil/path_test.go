@@ -2,8 +2,10 @@ package fileutil
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestResolveWithin(t *testing.T) {
@@ -115,5 +117,95 @@ func TestResolveWithinCreatesCorrectAbsPath(t *testing.T) {
 	expected := filepath.Join(baseDir, "sub")
 	if result != expected {
 		t.Errorf("got %q, want %q", result, expected)
+	}
+}
+
+func TestRemoteJoin(t *testing.T) {
+	tests := []struct {
+		name    string
+		base    string
+		relPath string
+		want    string
+	}{
+		{
+			name:    "absolute root",
+			base:    "/",
+			relPath: "artifact.tgz",
+			want:    "/artifact.tgz",
+		},
+		{
+			name:    "absolute nested",
+			base:    "/opt/app",
+			relPath: "artifact.tgz",
+			want:    "/opt/app/artifact.tgz",
+		},
+		{
+			name:    "relative path",
+			base:    "release",
+			relPath: "artifact.tgz",
+			want:    "release/artifact.tgz",
+		},
+		{
+			name:    "windows separators normalized",
+			base:    "\\opt\\app",
+			relPath: "nested\\artifact.tgz",
+			want:    "/opt/app/nested/artifact.tgz",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RemoteJoin(tt.base, tt.relPath)
+			if got != tt.want {
+				t.Fatalf("RemoteJoin(%q, %q) = %q, want %q", tt.base, tt.relPath, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRemoteTempPath(t *testing.T) {
+	now := time.Unix(0, 123456789)
+	tests := []struct {
+		name string
+		dest string
+		want string
+	}{
+		{
+			name: "absolute path",
+			dest: "/opt/app/app.tar.gz",
+			want: "/opt/app/.app.tar.gz-0.tmp",
+		},
+		{
+			name: "root directory path",
+			dest: "/artifact.tgz",
+			want: "/.artifact.tgz-0.tmp",
+		},
+		{
+			name: "relative path",
+			dest: "release/app.tar.gz",
+			want: "release/.app.tar.gz-0.tmp",
+		},
+		{
+			name: "current directory file",
+			dest: "artifact.tgz",
+			want: ".artifact.tgz-0.tmp",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RemoteTempPath(tt.dest, now)
+			if got != tt.want {
+				t.Fatalf("RemoteTempPath(%q) = %q, want %q", tt.dest, got, tt.want)
+			}
+
+			if path.Dir(got) != path.Dir(tt.want) {
+				t.Fatalf("expected temp path to stay in same directory, got %q for %q", got, tt.dest)
+			}
+
+			if path.Base(got)[0] != '.' {
+				t.Fatalf("expected temp file to be hidden, got %q", got)
+			}
+		})
 	}
 }

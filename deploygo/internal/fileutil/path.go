@@ -3,9 +3,60 @@ package fileutil
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+const WorkspaceDir = "workspace"
+
+func ProjectDir(projectName string) string {
+	return filepath.Join(WorkspaceDir, projectName)
+}
+
+func ProjectConfigPath(projectName string) string {
+	return filepath.Join(ProjectDir(projectName), "config.yaml")
+}
+
+func OverlaysDir(projectDir string) string {
+	return filepath.Join(projectDir, "overlays")
+}
+
+func SourceDir(projectDir string) string {
+	return filepath.Join(projectDir, "source")
+}
+
+func normalizeRemotePath(p string) string {
+	return strings.ReplaceAll(p, "\\", "/")
+}
+
+func RemoteJoin(base, relPath string) string {
+	return path.Join(normalizeRemotePath(base), normalizeRemotePath(relPath))
+}
+
+func RemoteDir(p string) string {
+	return path.Dir(normalizeRemotePath(p))
+}
+
+func RemoteBase(p string) string {
+	return path.Base(normalizeRemotePath(p))
+}
+
+func RemoteTempPath(dest string, now time.Time) string {
+	dir := RemoteDir(dest)
+	base := RemoteBase(dest)
+	tempName := fmt.Sprintf(".%s-%d.tmp", base, now.Unix())
+	return path.Join(dir, tempName)
+}
+
+func ContainerPath(toDir, baseName string) string {
+	return path.Join(toDir, baseName)
+}
+
+func ContainerRef(containerID, p string) string {
+	return fmt.Sprintf("%s:%s", containerID, p)
+}
 
 // ResolveWithin 在基础目录内安全解析相对路径，防止路径遍历攻击（path traversal）。
 // 它将相对路径与基础目录拼接，然后验证最终路径是否仍在基础目录内。

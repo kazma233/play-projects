@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"deploygo/internal/fileutil"
 )
 
 type PodmanRuntime struct {
@@ -109,13 +111,13 @@ func (p *PodmanRuntime) RemoveContainer(ctx context.Context, id string) error {
 }
 
 func (p *PodmanRuntime) CopyToContainer(ctx context.Context, containerID, srcPath, dstPath string) error {
-	_, err := p.runCommand(ctx, "cp", srcPath, fmt.Sprintf("%s:%s", containerID, dstPath))
+	_, err := p.runCommand(ctx, "cp", srcPath, fileutil.ContainerRef(containerID, dstPath))
 	return err
 }
 
 func (p *PodmanRuntime) CopyFromContainer(ctx context.Context, containerID, srcPath, dstPath string) error {
 	os.MkdirAll(dstPath, 0755)
-	_, err := p.runCommand(ctx, "cp", fmt.Sprintf("%s:%s", containerID, srcPath), dstPath)
+	_, err := p.runCommand(ctx, "cp", fileutil.ContainerRef(containerID, srcPath), dstPath)
 	return err
 }
 

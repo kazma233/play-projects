@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -94,7 +93,7 @@ func runBuild(runtime container.ContainerRuntime, build config.StageConfig, proj
 		}
 		if err := fileutil.GlobFiles(cp.From, projectDir, func(src string) error {
 			srcAbs := filepath.Join(projectDir, src)
-			dst := path.Join(cp.ToDir, filepath.Base(src))
+			dst := fileutil.ContainerPath(cp.ToDir, filepath.Base(src))
 			log.Printf("Copying %s -> %s:%s", srcAbs, containerID[:12], dst)
 			if err := runtime.CopyToContainer(ctx, containerID, srcAbs, dst); err != nil {
 				return fmt.Errorf("failed to copy to container: %w", err)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"deploygo/internal/config"
+	"deploygo/internal/fileutil"
 	"deploygo/internal/retry"
 
 	"github.com/pkg/sftp"
@@ -83,14 +84,6 @@ func (s *SFTPUploader) Upload(source, dest string, excludes []string) error {
 	return s.uploadFile(sftpClient, source, dest)
 }
 
-func remoteTempPath(dest string, now time.Time) string {
-	dest = filepath.ToSlash(dest)
-	dir := filepath.ToSlash(filepath.Dir(dest))
-	base := filepath.Base(dest)
-	tempName := fmt.Sprintf(".%s-%d.tmp", base, now.Unix())
-	return filepath.ToSlash(filepath.Join(dir, tempName))
-}
-
 func promoteUploadedFile(client *sftp.Client, tempPath, dest string) error {
 	if err := client.PosixRename(tempPath, dest); err == nil {
 		return nil
@@ -130,18 +123,15 @@ func (s *SFTPUploader) uploadFile(sftp *sftp.Client, source, dest string) error 
 	}
 	defer srcFile.Close()
 
-	// 确保目标路径使用 Unix 风格的斜杠（Linux 服务器）
 	dest = filepath.ToSlash(dest)
-	dstDir := filepath.Dir(dest)
-	// 再次确保目录路径是 Unix 风格
-	dstDir = filepath.ToSlash(dstDir)
+	dstDir := fileutil.RemoteDir(dest)
 
 	log.Printf("SFTP creating directory: %s", dstDir)
 	if err := sftp.MkdirAll(dstDir); err != nil {
 		return fmt.Errorf("failed to create destination directory '%s': %w", dstDir, err)
 	}
 
-	tempDest := remoteTempPath(dest, time.Now())
+	tempDest := fileutil.RemoteTempPath(dest, time.Now())
 	log.Printf("SFTP creating temp file: %s", tempDest)
 	dstFile, err := sftp.Create(tempDest)
 	if err != nil {
@@ -180,7 +170,6 @@ func (s *SFTPUploader) uploadFile(sftp *sftp.Client, source, dest string) error 
 }
 
 func (s *SFTPUploader) uploadDir(sftp *sftp.Client, source, dest string, excludes []string) error {
-	// 确保目标路径使用 Unix 风格的斜杠（Linux 服务器）
 	dest = filepath.ToSlash(dest)
 
 	return filepath.Walk(source, func(path string, info fs.FileInfo, err error) error {
@@ -188,20 +177,17 @@ func (s *SFTPUploader) uploadDir(sftp *sftp.Client, source, dest string, exclude
 			return err
 		}
 
-		// 计算相对路径（本地格式）
 		relPath, err := filepath.Rel(source, path)
 		if err != nil {
 			return err
 		}
 
-		// 转换为 Unix 风格的斜杠用于远程路径
 		relPathUnix := filepath.ToSlash(relPath)
 
 		if relPathUnix == "." {
 			return nil
 		}
 
-		// 检查排除规则（使用 Unix 风格路径）
 		for _, exclude := range excludes {
 			if strings.HasPrefix(relPathUnix, exclude) {
 				if info.IsDir() {
@@ -211,8 +197,7 @@ func (s *SFTPUploader) uploadDir(sftp *sftp.Client, source, dest string, exclude
 			}
 		}
 
-		// 构建目标路径（Unix 风格）
-		dstPath := dest + "/" + relPathUnix
+		dstPath := fileutil.RemoteJoin(dest, relPathUnix)
 		log.Printf("DEBUG uploadDir dstPath=%s", dstPath)
 
 		if info.IsDir() {

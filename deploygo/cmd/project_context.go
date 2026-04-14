@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"deploygo/internal/config"
+	"deploygo/internal/fileutil"
 )
 
 type projectContext struct {
@@ -20,7 +21,7 @@ func loadSelectedProjectConfig() (*projectContext, error) {
 		return nil, err
 	}
 
-	return loadProjectConfig(projectName, config.WorkspaceDir)
+	return loadProjectConfig(projectName, fileutil.WorkspaceDir)
 }
 
 func loadProjectConfig(name, workspaceDir string) (*projectContext, error) {

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"deploygo/internal/fileutil"
 )
 
 type DockerRuntime struct {
@@ -109,13 +111,13 @@ func (d *DockerRuntime) RemoveContainer(ctx context.Context, id string) error {
 }
 
 func (d *DockerRuntime) CopyToContainer(ctx context.Context, containerID, srcPath, dstPath string) error {
-	_, err := d.runCommand(ctx, "cp", srcPath, fmt.Sprintf("%s:%s", containerID, dstPath))
+	_, err := d.runCommand(ctx, "cp", srcPath, fileutil.ContainerRef(containerID, dstPath))
 	return err
 }
 
 func (d *DockerRuntime) CopyFromContainer(ctx context.Context, containerID, srcPath, dstPath string) error {
 	os.MkdirAll(dstPath, 0755)
-	_, err := d.runCommand(ctx, "cp", fmt.Sprintf("%s:%s", containerID, srcPath), dstPath)
+	_, err := d.runCommand(ctx, "cp", fileutil.ContainerRef(containerID, srcPath), dstPath)
 	return err
 }
 

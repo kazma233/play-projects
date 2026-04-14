@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"deploygo/internal/config"
+	"deploygo/internal/fileutil"
 )
 
 type configInfoLoader func(string) ([]config.ConfigInfo, error)
@@ -16,7 +17,7 @@ type configInfoLoader func(string) ([]config.ConfigInfo, error)
 func ensureProjectSelected() error {
 	selected, err := chooseProjectName(
 		projectName,
-		config.WorkspaceDir,
+		fileutil.WorkspaceDir,
 		config.LoadConfigInfo,
 		isInteractiveInput(),
 		os.Stdin,

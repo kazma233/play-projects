@@ -3,9 +3,9 @@ package cmd
 import (
 	"log"
 	"os"
-	"path/filepath"
 
 	"deploygo/internal/container"
+	"deploygo/internal/fileutil"
 	"deploygo/internal/git"
 	"deploygo/internal/stage"
 
@@ -37,8 +37,8 @@ var PipelineCmd = &cobra.Command{
 		log.Printf("Project directory: %s", basicPath)
 
 		projectDir := projectCtx.ProjectDir
-		overlaysDir := filepath.Join(projectDir, "overlays")
-		sourceDir := filepath.Join(projectDir, "source")
+		overlaysDir := fileutil.OverlaysDir(projectDir)
+		sourceDir := fileutil.SourceDir(projectDir)
 
 		// 执行 Git 克隆（如果配置了）
 		if cfg.Clone != nil && cfg.Clone.URL != "" {

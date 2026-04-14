@@ -8,8 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const WorkspaceDir = "workspace"
-
 type Config struct {
 	Builds    []StageConfig           `yaml:"builds"`            // 构建阶段配置
 	Deploys   []DeploymentStep        `yaml:"deploys"`           // 部署步骤配置

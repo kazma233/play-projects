@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"deploygo/internal/config"
+	"deploygo/internal/fileutil"
 	"deploygo/internal/stage"
 
 	"github.com/spf13/cobra"
@@ -21,9 +21,9 @@ var WriteCmd = &cobra.Command{
 			log.Fatal(err)
 		}
 
-		projectDir := filepath.Join(config.WorkspaceDir, projectName)
-		overlaysDir := filepath.Join(projectDir, "overlays")
-		sourceDir := filepath.Join(projectDir, "source")
+		projectDir := fileutil.ProjectDir(projectName)
+		overlaysDir := fileutil.OverlaysDir(projectDir)
+		sourceDir := fileutil.SourceDir(projectDir)
 
 		if _, err := os.Stat(overlaysDir); os.IsNotExist(err) {
 			log.Printf("No overlays directory found for project '%s'", projectName)
