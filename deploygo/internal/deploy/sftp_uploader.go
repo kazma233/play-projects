@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"deploygo/internal/config"
@@ -29,8 +28,6 @@ type SFTPUploader struct {
 	config connectionConfig
 	client *ssh.Client
 }
-
-const sftpUploadWorkers = 4
 
 func NewSFTPUploader(server *config.ServerConfig) *SFTPUploader {
 	return &SFTPUploader{
@@ -172,65 +169,21 @@ func (s *SFTPUploader) uploadFile(sftp *sftp.Client, source, dest string) error 
 }
 
 func (s *SFTPUploader) uploadDir(sftp *sftp.Client, source, dest string, excludes []string) error {
-	type uploadJob struct {
-		source string
-		dest   string
-	}
-
-	var (
-		errMu    sync.Mutex
-		firstErr error
-	)
-	setErr := func(err error) {
-		if err == nil {
-			return
-		}
-		errMu.Lock()
-		if firstErr == nil {
-			firstErr = err
-		}
-		errMu.Unlock()
-	}
-	getErr := func() error {
-		errMu.Lock()
-		defer errMu.Unlock()
-		return firstErr
-	}
-
-	jobs := make(chan uploadJob, sftpUploadWorkers*2)
-	var wg sync.WaitGroup
-	for range sftpUploadWorkers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for job := range jobs {
-				if getErr() != nil {
-					continue
-				}
-				if err := s.uploadFile(sftp, job.source, job.dest); err != nil {
-					setErr(err)
-				}
-			}
-		}()
-	}
-
-	errStopWalk := errors.New("stop walking upload tree")
-	stopWalk := func(err error) error {
-		setErr(err)
-		return errStopWalk
-	}
+	pool := newUploadPool(sftpUploadWorkers, func(task uploadTask) error {
+		return s.uploadFile(sftp, task.source, task.dest)
+	})
 
 	walkErr := filepath.Walk(source, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
-			return stopWalk(err)
+			return pool.WalkStop(err)
 		}
-		if getErr() != nil {
-			return errStopWalk
+		if pool.Stopped() {
+			return pool.WalkStop(nil)
 		}
 
 		relPath, err := filepath.Rel(source, path)
 		if err != nil {
-			return stopWalk(err)
+			return pool.WalkStop(err)
 		}
 
 		relPathUnix := filepath.ToSlash(relPath)
@@ -253,24 +206,18 @@ func (s *SFTPUploader) uploadDir(sftp *sftp.Client, source, dest string, exclude
 
 		if info.IsDir() {
 			if err := sftp.MkdirAll(dstPath); err != nil {
-				return stopWalk(fmt.Errorf("failed to create destination directory '%s': %w", dstPath, err))
+				return pool.WalkStop(fmt.Errorf("failed to create destination directory '%s': %w", dstPath, err))
 			}
 			return nil
 		}
 
-		if getErr() != nil {
-			return errStopWalk
+		if pool.Stopped() {
+			return pool.WalkStop(nil)
 		}
-		jobs <- uploadJob{source: path, dest: dstPath}
-		return nil
+		return pool.Submit(uploadTask{source: path, dest: dstPath})
 	})
-	close(jobs)
-	wg.Wait()
 
-	if walkErr != nil && !errors.Is(walkErr, errStopWalk) {
-		setErr(walkErr)
-	}
-	return getErr()
+	return pool.Finish(walkErr)
 }
 
 func (s *SFTPUploader) UploadDir(source, dest string, excludes []string) error {
