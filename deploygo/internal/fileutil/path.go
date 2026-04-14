@@ -31,16 +31,24 @@ func normalizeRemotePath(p string) string {
 	return strings.ReplaceAll(p, "\\", "/")
 }
 
+func RemoteClean(p string) string {
+	normalized := normalizeRemotePath(p)
+	if normalized == "" {
+		return ""
+	}
+	return path.Clean(normalized)
+}
+
 func RemoteJoin(base, relPath string) string {
 	return path.Join(normalizeRemotePath(base), normalizeRemotePath(relPath))
 }
 
 func RemoteDir(p string) string {
-	return path.Dir(normalizeRemotePath(p))
+	return path.Dir(RemoteClean(p))
 }
 
 func RemoteBase(p string) string {
-	return path.Base(normalizeRemotePath(p))
+	return path.Base(RemoteClean(p))
 }
 
 func RemoteTempPath(dest string, now time.Time) string {

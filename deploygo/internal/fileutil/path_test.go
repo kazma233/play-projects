@@ -163,6 +163,44 @@ func TestRemoteJoin(t *testing.T) {
 	}
 }
 
+func TestRemoteClean(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "empty path",
+			in:   "",
+			want: "",
+		},
+		{
+			name: "windows separators normalized",
+			in:   `\opt\app\artifact.tgz`,
+			want: "/opt/app/artifact.tgz",
+		},
+		{
+			name: "duplicate slashes cleaned",
+			in:   "/opt//app///artifact.tgz",
+			want: "/opt/app/artifact.tgz",
+		},
+		{
+			name: "relative path cleaned",
+			in:   "./release/../artifact.tgz",
+			want: "artifact.tgz",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RemoteClean(tt.in)
+			if got != tt.want {
+				t.Fatalf("RemoteClean(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRemoteTempPath(t *testing.T) {
 	now := time.Unix(0, 123456789)
 	tests := []struct {
