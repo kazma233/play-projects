@@ -1,0 +1,7 @@
+config.yml
+.idea
+.kiro
+backupgo
+app
+.DS_Store
+*state.json
