@@ -35,6 +35,7 @@ OPENCODE_SESSION_ID=ses_xxx cargo test imports_real_opencode_session_into_codex_
 
 ```bash
 pnpm tauri build
+# or pnpm tauri build --bundles (rpm|dmg)
 ```
 
 ## 运行约定
