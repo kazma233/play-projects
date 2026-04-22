@@ -1,7 +1,7 @@
 <template>
   <div class="page-view page-view--centered">
     <div class="tool-grid tool-grid--two tool-fill-area">
-      <n-card class="tool-surface hover-lift" size="small" :bordered="false">
+      <n-card class="tool-surface" size="small">
         <div class="tool-stack">
           <div class="tool-panel__title">
             <strong>输入内容</strong>
@@ -22,7 +22,7 @@
         </div>
       </n-card>
 
-      <n-card class="tool-surface hover-lift" size="small" :bordered="false">
+      <n-card class="tool-surface" size="small">
         <div class="tool-stack tool-fill-area">
           <div class="tool-panel__header">
             <div class="tool-panel__title">
@@ -72,16 +72,15 @@ const copyResult = async () => {
 
 <style scoped>
 .md5-input {
-  --tool-textarea-min-height: clamp(10rem, 30vh, 14rem);
+  --tool-textarea-min-height: 12rem;
 }
 
 .md5-output {
   display: block;
   max-width: 100%;
-  padding: 18px;
-  border-radius: 20px;
+  padding: 12px;
   text-align: center;
-  font-size: 1.08rem;
+  font-size: 1rem;
   word-break: break-all;
 }
 </style>

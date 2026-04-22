@@ -1,6 +1,6 @@
 <template>
   <div class="page-view ports-page">
-    <n-card class="tool-surface ports-toolbar-card" size="small" :bordered="false">
+    <n-card class="tool-surface ports-toolbar-card" size="small">
       <div class="tool-panel__header ports-toolbar">
         <div class="tool-panel__title">
           <strong>实时连接视图</strong>
@@ -34,7 +34,7 @@
       </div>
     </n-card>
 
-    <n-card class="tool-surface tool-surface--fill ports-table-card" size="small" :bordered="false">
+    <n-card class="tool-surface tool-surface--fill ports-table-card" size="small">
       <div
         v-if="!loading && filteredPorts.length > 0"
         class="ports-table-wrap"
@@ -511,9 +511,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 1rem;
   padding: clamp(0.875rem, 1.8vw, 1rem);
-  border-radius: clamp(1rem, 2.4vw, 1.25rem);
-  border: 1px solid rgba(0, 24, 88, 0.08);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(243, 210, 193, 0.26));
+  border: 1px solid #e5e7eb;
+  background: #fff;
 }
 
 .ports-card__header {
@@ -531,7 +530,7 @@ onBeforeUnmount(() => {
 }
 
 .ports-card__title strong {
-  color: var(--text-strong);
+  color: #111827;
   font-size: clamp(1.05rem, 2.8vw, 1.2rem);
 }
 
@@ -552,12 +551,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0.375rem;
   padding: 0.875rem 1rem;
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.68);
+  background: #f9fafb;
 }
 
 .ports-card__value {
-  color: var(--text-strong);
+  color: #111827;
   overflow-wrap: anywhere;
 }
 

@@ -1,6 +1,6 @@
 <template>
   <div class="page-view">
-    <n-card class="tool-surface tool-surface--fill" size="small" :bordered="false">
+    <n-card class="tool-surface tool-surface--fill" size="small">
       <n-split class="tool-split tool-split-frame tool-split-frame--tall" direction="vertical" :default-size="0.38">
         <template #1>
           <div class="tool-panel">
@@ -36,7 +36,7 @@
         </template>
 
         <template #2>
-          <div class="tool-panel tool-panel--muted">
+          <div class="tool-panel">
             <div class="tool-panel__header">
               <div class="tool-panel__title">
                 <strong>格式化结果</strong>
@@ -158,13 +158,12 @@ onBeforeUnmount(() => {
 .json-editor-stage {
   min-height: clamp(14rem, 36vh, 20rem);
   overflow: hidden;
-  border-radius: 20px;
-  border: 1px solid rgba(0, 24, 88, 0.08);
-  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #e5e7eb;
+  background: #fff;
 }
 
 .json-input {
-  --tool-textarea-min-height: clamp(10rem, 28vh, 13rem);
+  --tool-textarea-min-height: 12rem;
 }
 
 .json-editor-stage .jsoneditor {
@@ -175,7 +174,7 @@ onBeforeUnmount(() => {
 }
 
 .json-editor-stage .jsoneditor-menu {
-  background: #001858;
+  background: #111827;
   border-bottom: 0;
   display: flex;
   align-items: center;
@@ -201,8 +200,8 @@ onBeforeUnmount(() => {
 
 .json-editor-stage .jsoneditor-navigation-bar,
 .json-editor-stage .jsoneditor-statusbar {
-  background: rgba(243, 210, 193, 0.42);
-  border-color: rgba(0, 24, 88, 0.08);
+  background: #f9fafb;
+  border-color: #e5e7eb;
 }
 
 .json-editor-stage .jsoneditor-outer {

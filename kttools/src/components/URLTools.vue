@@ -1,6 +1,6 @@
 <template>
   <div class="page-view code-duplex-page">
-    <n-card class="tool-surface tool-surface--fill" size="small" :bordered="false">
+    <n-card class="tool-surface tool-surface--fill" size="small">
       <n-split class="tool-split tool-split-frame" direction="vertical" :default-size="0.5">
         <template #1>
           <div class="tool-panel">
@@ -22,7 +22,7 @@
         </template>
 
         <template #2>
-          <div class="tool-panel tool-panel--accent">
+          <div class="tool-panel">
             <div class="tool-panel__header">
               <div class="tool-panel__title">
                 <strong>URL 编码结果</strong>
@@ -89,6 +89,6 @@ const swap = () => {
 
 <style scoped>
 .code-duplex-page {
-  --tool-textarea-min-height: clamp(7.5rem, 20vh, 10rem);
+  --tool-textarea-min-height: 9rem;
 }
 </style>

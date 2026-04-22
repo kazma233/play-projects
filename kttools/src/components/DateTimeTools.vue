@@ -1,7 +1,7 @@
 <template>
   <div class="page-view page-view--centered">
     <div class="tool-grid tool-grid--two tool-fill-area">
-      <n-card class="tool-surface hover-lift" size="small" :bordered="false">
+      <n-card class="tool-surface" size="small">
         <div class="tool-stack">
           <div class="tool-panel__title">
             <strong>时间解析</strong>
@@ -30,7 +30,7 @@
         </div>
       </n-card>
 
-      <n-card class="tool-surface hover-lift" size="small" :bordered="false">
+      <n-card class="tool-surface" size="small">
         <div class="tool-stack">
           <div class="tool-panel__title">
             <strong>时间计算</strong>
@@ -156,9 +156,5 @@ const copy = async (text) => {
 <style scoped>
 .datetime-row {
   align-items: stretch;
-}
-
-.datetime-field {
-  width: 100%;
 }
 </style>

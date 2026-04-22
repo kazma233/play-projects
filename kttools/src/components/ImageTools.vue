@@ -1,6 +1,6 @@
 <template>
   <div class="page-view image-page">
-    <n-card class="tool-surface image-toolbar-card" :bordered="false">
+    <n-card class="tool-surface image-toolbar-card">
       <n-flex justify="space-between" align="center" class="image-toolbar" wrap>
         <div class="tool-panel__title">
           <strong>图片压缩转换</strong>
@@ -26,9 +26,8 @@
 
     <div class="main-layout">
       <!-- Sidebar -->
-        <n-card
+          <n-card
           class="sidebar tool-surface"
-          :bordered="false"
           content-class="image-card-content image-card-content--tight image-card-content--column image-card-content--full"
         >
         <n-scrollbar v-if="images.length > 0" class="image-sidebar-scroll">
@@ -45,7 +44,7 @@
       <!-- Main Content -->
       <div class="main-content">
         <!-- Config Panel -->
-        <n-card class="config-panel tool-surface" :bordered="false" content-class="image-card-content image-card-content--config">
+        <n-card class="config-panel tool-surface" content-class="image-card-content image-card-content--config">
             <n-flex wrap :gap="24" align="center">
               <n-flex align="center" :gap="8">
                 <n-text depth="3" class="label">格式</n-text>
@@ -101,7 +100,6 @@
         <n-card
           v-if="selectedImage"
           class="preview-area tool-surface"
-          :bordered="false"
           content-class="image-card-content image-card-content--tight image-card-content--column"
         >
           <n-flex align="center">
@@ -112,7 +110,6 @@
             <template #1>
               <n-card
                 class="image-panel tool-surface"
-                :bordered="false"
                 content-class="image-card-content image-card-content--tight image-card-content--column image-card-content--full"
               >
                 <n-flex justify="space-between" align="center" class="panel-header">
@@ -136,7 +133,6 @@
             <template #2>
               <n-card
                 class="image-panel tool-surface"
-                :bordered="false"
                 content-class="image-card-content image-card-content--tight image-card-content--column image-card-content--full"
               >
                 <n-flex justify="space-between" align="center" class="panel-header">
@@ -166,7 +162,7 @@
           </n-split>
         </n-card>
 
-        <n-card v-else class="empty-preview tool-surface" :bordered="false">
+        <n-card v-else class="empty-preview tool-surface">
           <n-empty description="从左侧列表中选择一张图片" />
         </n-card>
       </div>
@@ -220,9 +216,7 @@ const processedDimensions = ref(null)
 const processedImageUrl = ref('')
 let previewRequestId = 0
 let processRequestId = 0
-let autoProcessTimer = null
 const viewportWidth = ref(0)
-const AUTO_PROCESS_DELAY = 180
 
 const stackedPreview = computed(() => viewportWidth.value <= 1180)
 
@@ -298,15 +292,8 @@ const revokeImagePreview = (img) => {
   img.previewLoaded = false
 }
 
-const clearAutoProcessTimer = () => {
-  if (!autoProcessTimer) return
-  clearTimeout(autoProcessTimer)
-  autoProcessTimer = null
-}
-
 const invalidateProcessedPreview = () => {
   processRequestId++
-  clearAutoProcessTimer()
   processing.value = false
 }
 
@@ -380,7 +367,6 @@ const selectImage = async (idx) => {
 
   const img = images.value[idx]
   if (!img || !img.path) return
-  queueProcessedPreviewRefresh()
 
   if (img.previewLoaded && img.previewUrl) {
     previewLoading.value = false
@@ -422,7 +408,6 @@ const processImage = async ({ notifySuccess = true } = {}) => {
   const targetImage = selectedImage.value
   if (!targetImage) return
 
-  clearAutoProcessTimer()
   const currentRequestId = ++processRequestId
   const targetFormat = outputFormat.value
   const targetQuality = quality.value
@@ -469,21 +454,6 @@ const processImage = async ({ notifySuccess = true } = {}) => {
       processing.value = false
     }
   }
-}
-
-const queueProcessedPreviewRefresh = () => {
-  clearAutoProcessTimer()
-
-  if (!selectedImage.value?.path) return
-
-  processRequestId++
-  resetProcessedState()
-  processing.value = true
-
-  autoProcessTimer = window.setTimeout(() => {
-    autoProcessTimer = null
-    processImage({ notifySuccess: false })
-  }, AUTO_PROCESS_DELAY)
 }
 
 const saveImage = async () => {
@@ -595,7 +565,8 @@ watch(
   ],
   () => {
     if (selectedImage.value?.path) {
-      queueProcessedPreviewRefresh()
+      invalidateProcessedPreview()
+      resetProcessedState()
     }
   }
 )
@@ -640,7 +611,7 @@ watch(
 }
 
 .image-toolbar {
-  gap: 16px;
+  gap: 12px;
 }
 
 .image-toolbar-actions {
@@ -684,7 +655,7 @@ watch(
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(243, 210, 193, 0.24));
+  background: #fff;
 }
 
 .image-sidebar-scroll,
@@ -694,19 +665,17 @@ watch(
 }
 
 .image-list-item {
-  border-radius: 16px;
   margin: 4px 6px;
-  transition: background 180ms ease, transform 180ms ease;
+  transition: background 120ms ease;
 }
 
 .image-list-item:hover {
-  background: rgba(139, 211, 221, 0.16);
-  transform: translateX(2px);
+  background: #f3f4f6;
 }
 
 .image-list-item.active {
-  background: rgba(245, 130, 174, 0.14);
-  color: var(--text-strong);
+  background: #eef2ff;
+  color: #111827;
   font-weight: 700;
 }
 
@@ -793,8 +762,7 @@ watch(
   align-items: center;
   justify-content: center;
   padding: clamp(0.75rem, 1.6vw, 1rem);
-  background: linear-gradient(145deg, rgba(243, 210, 193, 0.22), rgba(255, 255, 255, 0.82));
-  border-radius: 18px;
+  background: #f9fafb;
   overflow: hidden;
 }
 

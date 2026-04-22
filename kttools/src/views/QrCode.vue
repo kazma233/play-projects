@@ -1,6 +1,6 @@
 <template>
   <div class="page-view page-view--centered">
-    <n-card class="tool-surface hover-lift" size="small" :bordered="false">
+    <n-card class="tool-surface" size="small">
       <div class="tool-grid tool-grid--two">
         <div class="tool-stack">
           <div class="tool-panel__title">
@@ -208,10 +208,7 @@ const copyQRCode = async () => {
 .qr-controls-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.75rem), 1fr));
-  gap: clamp(0.75rem, 1.5vw, 1rem);
-  padding: clamp(0.875rem, 1.8vw, 1rem);
-  border-radius: clamp(1rem, 2.6vw, 1.375rem);
-  background: rgba(255, 255, 255, 0.54);
+  gap: 12px;
 }
 
 .qr-control-item {
@@ -226,8 +223,7 @@ const copyQRCode = async () => {
   align-items: center;
   justify-content: center;
   min-height: clamp(14rem, 40vh, 20rem);
-  border-radius: clamp(1.25rem, 3vw, 1.75rem);
-  background: linear-gradient(145deg, rgba(243, 210, 193, 0.28), rgba(255, 255, 255, 0.78));
+  background: #fafafa;
 }
 
 .qr-action-row {
@@ -237,10 +233,8 @@ const copyQRCode = async () => {
 .qr-preview-frame {
   width: min(100%, 100%);
   max-width: 100%;
-  padding: clamp(0.875rem, 2vw, 1.125rem);
-  border-radius: clamp(1rem, 2.6vw, 1.5rem);
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 38px rgba(0, 24, 88, 0.08);
+  padding: 12px;
+  background: #fff;
 }
 
 .qr-empty-icon {

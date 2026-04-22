@@ -1,6 +1,6 @@
 <template>
   <div class="page-view page-view--centered">
-    <n-card class="tool-surface hover-lift" size="small" :bordered="false">
+    <n-card class="tool-surface" size="small">
       <div class="tool-grid tool-grid--two">
         <div class="tool-stack">
           <div class="tool-panel__title">
@@ -105,7 +105,7 @@ const copyResult = async () => {
 }
 
 .sha1-result-output {
-  --tool-code-font-size: 0.96rem;
+  --tool-code-font-size: 0.95rem;
   --tool-code-text-align: left;
 }
 </style>
