@@ -1,10 +1,7 @@
-export const homeMeta = {
-  label: '首页',
-  path: '/',
+export const appMeta = {
+  label: 'Kt 工具箱',
   icon: '🧰',
-  eyebrow: '工具总览',
-  description: '提供编码转换、JSON 处理、哈希计算、二维码、端口管理和图片处理等常用能力。',
-  highlights: ['编码转换', '系统诊断', '图片处理']
+  description: '常用开发工具集合'
 }
 
 export const toolItems = [

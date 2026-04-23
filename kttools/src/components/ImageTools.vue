@@ -114,13 +114,18 @@
               >
                 <n-flex justify="space-between" align="center" class="panel-header">
                   <n-text depth="3">原图</n-text>
-                  <n-text depth="3">{{ selectedImage.width }} x {{ selectedImage.height }}</n-text>
+                  <n-flex vertical align="end" :gap="4" class="panel-header-meta">
+                    <n-text class="image-preview-load-time">
+                      {{ originalPreviewLoadText }}
+                    </n-text>
+                    <n-text depth="3">{{ selectedImage.width }} x {{ selectedImage.height }}</n-text>
+                  </n-flex>
                 </n-flex>
                 <div class="image-viewer">
                   <n-image
                     v-if="originalImageUrl"
                     class="image-viewer__media"
-                    :img-props="{ class: 'image-viewer__asset' }"
+                    :img-props="originalImageProps"
                     :src="originalImageUrl"
                     alt="原图"
                     object-fit="contain"
@@ -137,13 +142,18 @@
               >
                 <n-flex justify="space-between" align="center" class="panel-header">
                   <n-text depth="3">处理后</n-text>
-                  <n-text depth="3" class="image-compression-meta">{{ compressionInfo }}</n-text>
+                  <n-flex vertical align="end" :gap="4" class="panel-header-meta">
+                    <n-text class="image-preview-load-time">
+                      {{ processedPreviewLoadText }}
+                    </n-text>
+                    <n-text depth="3" class="image-compression-meta">{{ compressionInfo }}</n-text>
+                  </n-flex>
                 </n-flex>
                 <div class="image-viewer">
                   <n-image
                     v-if="processedImageUrl"
                     class="image-viewer__media"
-                    :img-props="{ class: 'image-viewer__asset' }"
+                    :img-props="processedImageProps"
                     :src="processedImageUrl"
                     alt="处理后"
                     object-fit="contain"
@@ -214,9 +224,15 @@ const originalImageUrl = ref('')
 const processedData = ref(null)
 const processedDimensions = ref(null)
 const processedImageUrl = ref('')
+const processedPreviewLoadMs = ref(null)
+const processedPreviewLoading = ref(false)
 let previewRequestId = 0
 let processRequestId = 0
+let autoProcessTimer = null
+let originalPreviewLoadStartedAt = 0
+let processedPreviewLoadStartedAt = 0
 const viewportWidth = ref(0)
+const AUTO_PROCESS_DELAY = 180
 
 const stackedPreview = computed(() => viewportWidth.value <= 1180)
 
@@ -230,6 +246,75 @@ const selectedImage = computed(() => {
   }
   return null
 })
+
+const originalPreviewLoadText = computed(() => {
+  if (previewLoading.value) return '原图加载中...'
+
+  const loadMs = selectedImage.value?.previewLoadMs
+  if (typeof loadMs !== 'number') return '原图加载耗时: --'
+
+  return `原图加载耗时: ${loadMs.toFixed(2)} ms`
+})
+
+const finishOriginalPreviewLoad = ({ failed = false } = {}) => {
+  if (!previewLoading.value) return
+
+  if (!failed && selectedImage.value && originalPreviewLoadStartedAt > 0) {
+    selectedImage.value.previewLoadMs = performance.now() - originalPreviewLoadStartedAt
+  }
+
+  previewLoading.value = false
+  originalPreviewLoadStartedAt = 0
+}
+
+const handleOriginalPreviewLoad = () => {
+  finishOriginalPreviewLoad()
+}
+
+const handleOriginalPreviewError = () => {
+  finishOriginalPreviewLoad({ failed: true })
+  message.error('原图预览渲染失败')
+}
+
+const originalImageProps = {
+  class: 'image-viewer__asset',
+  onLoad: handleOriginalPreviewLoad,
+  onError: handleOriginalPreviewError
+}
+
+const processedPreviewLoadText = computed(() => {
+  if (processing.value || processedPreviewLoading.value) return '处理预览生成中...'
+
+  if (typeof processedPreviewLoadMs.value !== 'number') return '处理预览耗时: --'
+
+  return `处理预览耗时: ${processedPreviewLoadMs.value.toFixed(2)} ms`
+})
+
+const finishProcessedPreviewLoad = ({ failed = false } = {}) => {
+  if (!processedPreviewLoading.value) return
+
+  if (!failed && processedPreviewLoadStartedAt > 0) {
+    processedPreviewLoadMs.value = performance.now() - processedPreviewLoadStartedAt
+  }
+
+  processedPreviewLoading.value = false
+  processedPreviewLoadStartedAt = 0
+}
+
+const handleProcessedPreviewLoad = () => {
+  finishProcessedPreviewLoad()
+}
+
+const handleProcessedPreviewError = () => {
+  finishProcessedPreviewLoad({ failed: true })
+  message.error('处理后预览渲染失败')
+}
+
+const processedImageProps = {
+  class: 'image-viewer__asset',
+  onLoad: handleProcessedPreviewLoad,
+  onError: handleProcessedPreviewError
+}
 
 const compressionInfo = computed(() => {
   if (!processedData.value) return ''
@@ -290,11 +375,21 @@ const revokeImagePreview = (img) => {
   revokeObjectUrl(img.previewUrl)
   img.previewUrl = ''
   img.previewLoaded = false
+  img.previewLoadMs = null
+}
+
+const clearAutoProcessTimer = () => {
+  if (!autoProcessTimer) return
+  clearTimeout(autoProcessTimer)
+  autoProcessTimer = null
 }
 
 const invalidateProcessedPreview = () => {
   processRequestId++
+  clearAutoProcessTimer()
   processing.value = false
+  processedPreviewLoading.value = false
+  processedPreviewLoadStartedAt = 0
 }
 
 const resetProcessedState = () => {
@@ -302,6 +397,7 @@ const resetProcessedState = () => {
   processedDimensions.value = null
   revokeObjectUrl(processedImageUrl.value)
   processedImageUrl.value = ''
+  processedPreviewLoadMs.value = null
 }
 
 const createImageEntry = (file) => {
@@ -317,7 +413,8 @@ const createImageEntry = (file) => {
     error: null,
     outputPath: '',
     previewLoaded: false,
-    previewUrl: ''
+    previewUrl: '',
+    previewLoadMs: null
   }
 }
 
@@ -367,14 +464,23 @@ const selectImage = async (idx) => {
 
   const img = images.value[idx]
   if (!img || !img.path) return
+  queueProcessedPreviewRefresh()
 
   if (img.previewLoaded && img.previewUrl) {
-    previewLoading.value = false
+    if (typeof img.previewLoadMs === 'number') {
+      previewLoading.value = false
+      originalPreviewLoadStartedAt = 0
+    } else {
+      previewLoading.value = true
+      originalPreviewLoadStartedAt = performance.now()
+    }
     originalImageUrl.value = img.previewUrl
     return
   }
 
   previewLoading.value = true
+  originalPreviewLoadStartedAt = performance.now()
+  img.previewLoadMs = null
 
   try {
     const result = await invoke('load_original_image', {
@@ -385,8 +491,13 @@ const selectImage = async (idx) => {
     images.value[idx].height = result.height
     images.value[idx].size = result.original_size
 
+    const ext = img.name.split('.').pop()?.toLowerCase()
+    const mimeType = ext === 'png' ? 'image/png' :
+      ext === 'webp' ? 'image/webp' :
+        ext === 'bmp' ? 'image/bmp' : 'image/jpeg'
+
     revokeImagePreview(images.value[idx])
-    const blob = new Blob([new Uint8Array(result.preview_data)], { type: result.preview_mime_type })
+    const blob = new Blob([new Uint8Array(result.image_data)], { type: mimeType })
     images.value[idx].previewUrl = URL.createObjectURL(blob)
     images.value[idx].previewLoaded = true
 
@@ -395,11 +506,9 @@ const selectImage = async (idx) => {
     }
   } catch (e) {
     if (currentRequestId === previewRequestId && selectedIndex.value === idx) {
-      message.error('加载预览失败: ' + e)
-    }
-  } finally {
-    if (currentRequestId === previewRequestId && selectedIndex.value === idx) {
       previewLoading.value = false
+      originalPreviewLoadStartedAt = 0
+      message.error('加载预览失败: ' + e)
     }
   }
 }
@@ -408,6 +517,7 @@ const processImage = async ({ notifySuccess = true } = {}) => {
   const targetImage = selectedImage.value
   if (!targetImage) return
 
+  clearAutoProcessTimer()
   const currentRequestId = ++processRequestId
   const targetFormat = outputFormat.value
   const targetQuality = quality.value
@@ -416,6 +526,8 @@ const processImage = async ({ notifySuccess = true } = {}) => {
 
   processing.value = true
   resetProcessedState()
+  processedPreviewLoading.value = true
+  processedPreviewLoadStartedAt = performance.now()
 
   try {
     const result = await invoke('process_image', {
@@ -448,12 +560,29 @@ const processImage = async ({ notifySuccess = true } = {}) => {
     if (currentRequestId !== processRequestId || selectedImage.value?.path !== targetImage.path) {
       return
     }
+    processedPreviewLoading.value = false
+    processedPreviewLoadStartedAt = 0
     message.error('处理失败: ' + e)
   } finally {
     if (currentRequestId === processRequestId && selectedImage.value?.path === targetImage.path) {
       processing.value = false
     }
   }
+}
+
+const queueProcessedPreviewRefresh = () => {
+  clearAutoProcessTimer()
+
+  if (!selectedImage.value?.path) return
+
+  processRequestId++
+  resetProcessedState()
+  processing.value = true
+
+  autoProcessTimer = window.setTimeout(() => {
+    autoProcessTimer = null
+    processImage({ notifySuccess: false })
+  }, AUTO_PROCESS_DELAY)
 }
 
 const saveImage = async () => {
@@ -565,8 +694,7 @@ watch(
   ],
   () => {
     if (selectedImage.value?.path) {
-      invalidateProcessedPreview()
-      resetProcessedState()
+      queueProcessedPreviewRefresh()
     }
   }
 )
@@ -750,8 +878,25 @@ watch(
   flex-wrap: wrap;
 }
 
+.panel-header-meta {
+  min-width: 0;
+}
+
 .image-compression-meta {
   font-size: clamp(0.75rem, 1.8vw, 0.8125rem);
+}
+
+.image-preview-load-time {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ========== 图片查看器 ========== */

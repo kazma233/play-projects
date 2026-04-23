@@ -1,9 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import Home from '../views/Home.vue'
-import { homeMeta, toolMetaMap } from '../constants/tool-meta'
+import { toolMetaMap } from '../constants/tool-meta'
 
 const routes = [
-    { path: '/', name: 'Home', component: Home, meta: homeMeta },
+    { path: '/', redirect: '/datetime' },
     { path: '/base64', name: 'Base64Tools', component: () => import('../components/Base64Tools.vue'), meta: toolMetaMap['/base64'] },
     { path: '/url', name: 'URLTools', component: () => import('../components/URLTools.vue'), meta: toolMetaMap['/url'] },
     { path: '/datetime', name: 'DateTimeTools', component: () => import('../components/DateTimeTools.vue'), meta: toolMetaMap['/datetime'] },

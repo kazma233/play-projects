@@ -214,7 +214,7 @@ async fn process_image(
     webp_lossless: Option<bool>,
 ) -> Result<ProcessResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        image_processor::process_image(&path, format, quality, scale, webp_lossless.unwrap_or(true))
+        image_processor::process_image(&path, format, quality, scale, webp_lossless.unwrap_or(false))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -236,7 +236,7 @@ async fn process_and_save_image(
             format,
             quality,
             scale,
-            webp_lossless.unwrap_or(true),
+            webp_lossless.unwrap_or(false),
         )
     })
     .await

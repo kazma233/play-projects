@@ -2,7 +2,7 @@
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { homeMeta, toolItems, toolMetaMap } from './constants/tool-meta'
+import { appMeta, toolItems, toolMetaMap } from './constants/tool-meta'
 
 const route = useRoute()
 const router = useRouter()
@@ -11,11 +11,9 @@ const collapsed = ref(false)
 const isCompact = ref(false)
 const viewportWidth = ref(0)
 
-const currentMeta = computed(() => route.meta?.path ? route.meta : toolMetaMap[route.path] || homeMeta)
-const activeKey = computed(() => toolMetaMap[route.path] ? route.path : null)
-const isHomeRoute = computed(() => route.path === '/')
-const showPageHero = computed(() => !isHomeRoute.value)
-const showHeader = computed(() => showPageHero.value || isCompact.value)
+const currentMeta = computed(() => route.meta?.path ? route.meta : toolMetaMap[route.path] || toolMetaMap['/datetime'])
+const activeKey = computed(() => toolMetaMap[route.path] ? route.path : '/datetime')
+const showHeader = computed(() => true)
 const siderWidth = computed(() => {
   if (!viewportWidth.value) {
     return 260
@@ -89,11 +87,11 @@ onBeforeUnmount(() => {
             bordered
           >
             <div class="app-sider-inner">
-              <button class="brand-panel" type="button" @click="openPath('/')">
-                <span class="brand-panel__icon">{{ homeMeta.icon }}</span>
+              <button class="brand-panel" type="button" @click="openPath('/datetime')">
+                <span class="brand-panel__icon">{{ appMeta.icon }}</span>
                 <div class="brand-panel__copy">
                   <strong>Kt 工具箱</strong>
-                  <p>常用开发工具集合</p>
+                  <p>{{ appMeta.description }}</p>
                 </div>
               </button>
 
@@ -117,7 +115,7 @@ onBeforeUnmount(() => {
                   <span>{{ collapsed ? '☰' : '✕' }}</span>
                 </n-button>
 
-                <div v-if="showPageHero" class="page-copy-block">
+                <div class="page-copy-block">
                   <span class="page-kicker">{{ currentMeta.eyebrow }}</span>
                   <h1>{{ currentMeta.label }}</h1>
                   <p>{{ currentMeta.description }}</p>

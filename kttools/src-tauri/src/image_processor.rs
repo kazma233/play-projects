@@ -1,13 +1,11 @@
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
-use image::codecs::webp::WebPEncoder;
 use image::{ExtendedColorType, GenericImageView, ImageEncoder};
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-const PREVIEW_MAX_EDGE: u32 = 1600;
-const PREVIEW_JPEG_QUALITY: u8 = 80;
+use fast_image_resize::{FilterType as FirFilterType, ResizeAlg, ResizeOptions, Resizer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
 pub enum OutputFormat {
@@ -47,8 +45,7 @@ pub struct ProcessResult {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OriginalImageResult {
-    pub preview_data: Vec<u8>,
-    pub preview_mime_type: String,
+    pub image_data: Vec<u8>,
     pub original_size: u64,
     pub width: u32,
     pub height: u32,
@@ -69,65 +66,41 @@ fn scaled_dimensions(width: u32, height: u32, scale: u32) -> (u32, u32) {
     )
 }
 
-fn fit_dimensions(width: u32, height: u32, max_edge: u32) -> (u32, u32) {
-    let longest_edge = width.max(height);
-
-    if longest_edge <= max_edge {
-        return (width, height);
-    }
-
-    let ratio = max_edge as f32 / longest_edge as f32;
-    (
-        ((width as f32 * ratio).round() as u32).max(1),
-        ((height as f32 * ratio).round() as u32).max(1),
-    )
-}
-
 fn resize_if_needed(
     img: &image::DynamicImage,
     width: u32,
     height: u32,
-    filter: image::imageops::FilterType,
 ) -> Option<image::DynamicImage> {
     let (current_width, current_height) = img.dimensions();
 
     if current_width == width && current_height == height {
         None
     } else {
-        Some(img.resize(width, height, filter))
+        Some(
+            resize_image_parallel(img, width, height).unwrap_or_else(|_| {
+                img.resize(width, height, image::imageops::FilterType::CatmullRom)
+            }),
+        )
     }
 }
 
-fn encode_preview_image(img: &image::DynamicImage) -> Result<(Vec<u8>, String), String> {
-    let (preview_width, preview_height) =
-        fit_dimensions(img.width(), img.height(), PREVIEW_MAX_EDGE);
-    let resized = resize_if_needed(
-        img,
-        preview_width,
-        preview_height,
-        image::imageops::FilterType::Triangle,
-    );
-    let source = resized.as_ref().unwrap_or(img);
-    let mut buffer = Cursor::new(Vec::new());
+fn resize_image_parallel(
+    img: &image::DynamicImage,
+    width: u32,
+    height: u32,
+) -> Result<image::DynamicImage, String> {
+    let mut resized = image::DynamicImage::new(width, height, img.color());
+    let options =
+        ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FirFilterType::CatmullRom));
+    let mut resizer = Resizer::new();
 
-    if source.color().has_alpha() {
-        let rgba = source.to_rgba8();
+    resizer
+        .resize(img, &mut resized, Some(&options))
+        .map_err(|e| format!("Failed to resize image: {}", e))?;
 
-        WebPEncoder::new_lossless(&mut buffer)
-            .encode(&rgba, rgba.width(), rgba.height(), ExtendedColorType::Rgba8)
-            .map_err(|e| format!("Failed to write preview WebP: {}", e))?;
+    let _ = resized.set_color_space(img.color_space());
 
-        Ok((buffer.into_inner(), "image/webp".to_string()))
-    } else {
-        let rgb = source.to_rgb8();
-        let mut encoder = JpegEncoder::new_with_quality(&mut buffer, PREVIEW_JPEG_QUALITY);
-
-        encoder
-            .encode(&rgb, rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
-            .map_err(|e| format!("Failed to write preview JPEG: {}", e))?;
-
-        Ok((buffer.into_inner(), "image/jpeg".to_string()))
-    }
+    Ok(resized)
 }
 
 fn encode_webp_image(
@@ -135,25 +108,125 @@ fn encode_webp_image(
     quality: u8,
     lossless: bool,
 ) -> Result<Vec<u8>, String> {
-    if img.color().has_alpha() {
-        let rgba = img.to_rgba8();
-        let encoder = webp::Encoder::from_rgba(&rgba, rgba.width(), rgba.height());
+    let encode = |rgb: &[u8], width: u32, height: u32| {
+        let encoder = webp::Encoder::from_rgb(rgb, width, height);
 
-        Ok(if lossless {
+        if lossless {
             encoder.encode_lossless().to_vec()
         } else {
             encoder.encode(quality as f32).to_vec()
-        })
-    } else {
-        let rgb = img.to_rgb8();
-        let encoder = webp::Encoder::from_rgb(&rgb, rgb.width(), rgb.height());
+        }
+    };
 
-        Ok(if lossless {
-            encoder.encode_lossless().to_vec()
-        } else {
-            encoder.encode(quality as f32).to_vec()
-        })
+    match img {
+        image::DynamicImage::ImageRgb8(rgb) => Ok(encode(rgb.as_raw(), rgb.width(), rgb.height())),
+        image::DynamicImage::ImageRgba8(rgba) => {
+            let encoder = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height());
+
+            Ok(if lossless {
+                encoder.encode_lossless().to_vec()
+            } else {
+                encoder.encode(quality as f32).to_vec()
+            })
+        }
+        _ if img.color().has_alpha() => {
+            let rgba = img.to_rgba8();
+            let encoder = webp::Encoder::from_rgba(&rgba, rgba.width(), rgba.height());
+
+            Ok(if lossless {
+                encoder.encode_lossless().to_vec()
+            } else {
+                encoder.encode(quality as f32).to_vec()
+            })
+        }
+        _ => {
+            let rgb = img.to_rgb8();
+            Ok(encode(rgb.as_raw(), rgb.width(), rgb.height()))
+        }
     }
+}
+
+fn encode_png_image(
+    img: &image::DynamicImage,
+    quality: u8,
+    buffer: &mut Cursor<Vec<u8>>,
+) -> Result<(), String> {
+    let compression_type = match quality {
+        1..=40 => image::codecs::png::CompressionType::Fast,
+        41..=89 => image::codecs::png::CompressionType::Default,
+        _ => image::codecs::png::CompressionType::Best,
+    };
+
+    match img {
+        image::DynamicImage::ImageRgb8(rgb) => {
+            PngEncoder::new_with_quality(
+                buffer,
+                compression_type,
+                image::codecs::png::FilterType::Adaptive,
+            )
+            .write_image(rgb, rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
+            .map_err(|e| format!("Failed to write PNG: {}", e))?;
+        }
+        image::DynamicImage::ImageRgba8(rgba) => {
+            PngEncoder::new_with_quality(
+                buffer,
+                compression_type,
+                image::codecs::png::FilterType::Adaptive,
+            )
+            .write_image(rgba, rgba.width(), rgba.height(), ExtendedColorType::Rgba8)
+            .map_err(|e| format!("Failed to write PNG: {}", e))?;
+        }
+        _ if img.color().has_alpha() => {
+            let rgba = img.to_rgba8();
+
+            PngEncoder::new_with_quality(
+                buffer,
+                compression_type,
+                image::codecs::png::FilterType::Adaptive,
+            )
+            .write_image(&rgba, rgba.width(), rgba.height(), ExtendedColorType::Rgba8)
+            .map_err(|e| format!("Failed to write PNG: {}", e))?;
+        }
+        _ => {
+            let rgb = img.to_rgb8();
+
+            PngEncoder::new_with_quality(
+                buffer,
+                compression_type,
+                image::codecs::png::FilterType::Adaptive,
+            )
+            .write_image(&rgb, rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
+            .map_err(|e| format!("Failed to write PNG: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn encode_jpeg_image(
+    img: &image::DynamicImage,
+    quality: u8,
+    buffer: &mut Cursor<Vec<u8>>,
+) -> Result<(), String> {
+    match img {
+        image::DynamicImage::ImageRgb8(rgb) => {
+            let mut encoder = JpegEncoder::new_with_quality(buffer, quality);
+
+            encoder
+                .encode(rgb, rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
+                .map_err(|e| format!("Failed to write JPEG: {}", e))?;
+        }
+        _ => {
+            let rgb = img.to_rgb8();
+            let mut encoder = JpegEncoder::new_with_quality(buffer, quality);
+
+            encoder
+                .encode(&rgb, rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
+                .map_err(|e| format!("Failed to write JPEG: {}", e))?;
+        }
+    }
+
+    Ok(())
 }
 
 pub fn load_original_image(path: &str) -> Result<OriginalImageResult, String> {
@@ -167,17 +240,16 @@ pub fn load_original_image(path: &str) -> Result<OriginalImageResult, String> {
         .map_err(|e| format!("Failed to get file size: {}", e))?
         .len();
 
-    let img = image::open(&path_buf).map_err(|e| format!("Failed to open image: {}", e))?;
+    let image_data = fs::read(&path_buf).map_err(|e| format!("Failed to read file: {}", e))?;
     let (width, height) = if let Ok(size) = imagesize::size(&path_buf) {
         (size.width as u32, size.height as u32)
     } else {
-        img.dimensions()
+        image::image_dimensions(&path_buf)
+            .map_err(|e| format!("Failed to get image dimensions: {}", e))?
     };
-    let (preview_data, preview_mime_type) = encode_preview_image(&img)?;
 
     Ok(OriginalImageResult {
-        preview_data,
-        preview_mime_type,
+        image_data,
         original_size,
         width,
         height,
@@ -196,12 +268,7 @@ fn encode_image(
 
     let (scaled_width, scaled_height) = scaled_dimensions(original_width, original_height, scale);
 
-    let resized = resize_if_needed(
-        img,
-        scaled_width,
-        scaled_height,
-        image::imageops::FilterType::CatmullRom,
-    );
+    let resized = resize_if_needed(img, scaled_width, scaled_height);
     let source = resized.as_ref().unwrap_or(img);
 
     let mut buffer = Cursor::new(Vec::new());
@@ -211,41 +278,10 @@ fn encode_image(
             buffer = Cursor::new(encode_webp_image(source, quality, webp_lossless)?);
         }
         OutputFormat::Png => {
-            let compression_type = match quality {
-                1..=40 => image::codecs::png::CompressionType::Fast,
-                41..=89 => image::codecs::png::CompressionType::Default,
-                _ => image::codecs::png::CompressionType::Best,
-            };
-
-            if source.color().has_alpha() {
-                let rgba = source.to_rgba8();
-
-                PngEncoder::new_with_quality(
-                    &mut buffer,
-                    compression_type,
-                    image::codecs::png::FilterType::Adaptive,
-                )
-                .write_image(&rgba, rgba.width(), rgba.height(), ExtendedColorType::Rgba8)
-                .map_err(|e| format!("Failed to write PNG: {}", e))?;
-            } else {
-                let rgb = source.to_rgb8();
-
-                PngEncoder::new_with_quality(
-                    &mut buffer,
-                    compression_type,
-                    image::codecs::png::FilterType::Adaptive,
-                )
-                .write_image(&rgb, rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
-                .map_err(|e| format!("Failed to write PNG: {}", e))?;
-            }
+            encode_png_image(source, quality, &mut buffer)?;
         }
         OutputFormat::Jpg => {
-            let rgb = source.to_rgb8();
-            let mut encoder = JpegEncoder::new_with_quality(&mut buffer, quality);
-
-            encoder
-                .encode(&rgb, rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
-                .map_err(|e| format!("Failed to write JPEG: {}", e))?;
+            encode_jpeg_image(source, quality, &mut buffer)?;
         }
     }
 
@@ -277,9 +313,8 @@ pub fn get_image_info(path: &str) -> Result<ImageInfo, String> {
         .unwrap_or("unknown")
         .to_string();
 
-    let img = image::open(&path_buf).map_err(|e| format!("Failed to open image: {}", e))?;
-
-    let (width, height) = img.dimensions();
+    let (width, height) = image::image_dimensions(&path_buf)
+        .map_err(|e| format!("Failed to get image dimensions: {}", e))?;
 
     Ok(ImageInfo {
         path: path.to_string(),
@@ -342,4 +377,79 @@ pub fn process_and_save_image(
         height: result.height,
         processed_size: result.processed_size,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{DynamicImage, Rgba, RgbaImage};
+
+    fn sample_image() -> DynamicImage {
+        let width = 192;
+        let height = 128;
+        let mut img = RgbaImage::new(width, height);
+
+        for y in 0..height {
+            for x in 0..width {
+                let r = ((x * 13 + y * 7) % 256) as u8;
+                let g = ((x * 5 + y * 11) % 256) as u8;
+                let b = (((x * y) + x * 3 + y * 9) % 256) as u8;
+                let a = if (x / 12 + y / 12) % 2 == 0 { 255 } else { 210 };
+                img.put_pixel(x, y, Rgba([r, g, b, a]));
+            }
+        }
+
+        DynamicImage::ImageRgba8(img)
+    }
+
+    #[test]
+    fn scale_changes_output_dimensions() {
+        let img = sample_image();
+
+        let result = encode_image(&img, OutputFormat::Jpg, 80, 50, false).unwrap();
+
+        assert_eq!(result.width, 96);
+        assert_eq!(result.height, 64);
+    }
+
+    #[test]
+    fn jpeg_quality_changes_output_size() {
+        let img = sample_image();
+
+        let low_quality = encode_image(&img, OutputFormat::Jpg, 25, 100, false).unwrap();
+        let high_quality = encode_image(&img, OutputFormat::Jpg, 95, 100, false).unwrap();
+
+        assert_ne!(low_quality.data, high_quality.data);
+        assert!(low_quality.processed_size < high_quality.processed_size);
+    }
+
+    #[test]
+    fn webp_quality_and_lossless_toggle_change_output() {
+        let img = sample_image();
+
+        let lossy_low = encode_image(&img, OutputFormat::WebP, 20, 100, false).unwrap();
+        let lossy_high = encode_image(&img, OutputFormat::WebP, 90, 100, false).unwrap();
+        let lossless = encode_image(&img, OutputFormat::WebP, 90, 100, true).unwrap();
+
+        assert_ne!(lossy_low.data, lossy_high.data);
+        assert_ne!(lossy_high.data, lossless.data);
+        assert!(lossy_low.processed_size <= lossy_high.processed_size);
+        assert!(lossy_high.processed_size < lossless.processed_size);
+    }
+
+    #[test]
+    fn png_quality_is_effective_by_bucket() {
+        let img = sample_image();
+
+        let fast_10 = encode_image(&img, OutputFormat::Png, 10, 100, false).unwrap();
+        let fast_30 = encode_image(&img, OutputFormat::Png, 30, 100, false).unwrap();
+        let default_50 = encode_image(&img, OutputFormat::Png, 50, 100, false).unwrap();
+        let default_80 = encode_image(&img, OutputFormat::Png, 80, 100, false).unwrap();
+        let best_95 = encode_image(&img, OutputFormat::Png, 95, 100, false).unwrap();
+
+        assert_eq!(fast_10.data, fast_30.data);
+        assert_eq!(default_50.data, default_80.data);
+        assert_ne!(fast_10.data, default_50.data);
+        assert_ne!(default_50.data, best_95.data);
+    }
 }
