@@ -9,10 +9,7 @@ use tauri::image::Image;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 mod datetime;
-mod image_processor;
 mod ports;
-
-use image_processor::{OutputFormat, ProcessResult, SavedImageResult};
 
 #[tauri::command]
 fn base64_encode(input: &str, url_mode: bool) -> String {
@@ -200,58 +197,6 @@ async fn kill_process(target: ports::KillTarget) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn get_image_info(path: String) -> Result<image_processor::ImageInfo, String> {
-    image_processor::get_image_info(&path)
-}
-
-#[tauri::command]
-async fn process_image(
-    path: String,
-    format: OutputFormat,
-    quality: u8,
-    scale: u32,
-    webp_lossless: Option<bool>,
-) -> Result<ProcessResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        image_processor::process_image(&path, format, quality, scale, webp_lossless.unwrap_or(false))
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn process_and_save_image(
-    input_path: String,
-    output_dir: String,
-    format: OutputFormat,
-    quality: u8,
-    scale: u32,
-    webp_lossless: Option<bool>,
-) -> Result<SavedImageResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        image_processor::process_and_save_image(
-            &input_path,
-            &output_dir,
-            format,
-            quality,
-            scale,
-            webp_lossless.unwrap_or(false),
-        )
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn load_original_image(path: String) -> Result<image_processor::OriginalImageResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        image_processor::load_original_image(&path)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -273,10 +218,6 @@ pub fn run() {
             copy_qr_code_to_clipboard,
             get_port_list,
             kill_process,
-            get_image_info,
-            process_image,
-            process_and_save_image,
-            load_original_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

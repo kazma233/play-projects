@@ -1,0 +1,92 @@
+:root {
+  --panel-gap: 16px;
+  --surface-border: rgba(148, 163, 184, 0.22);
+  --surface-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+  font-family: "SF Pro Display", "PingFang SC", "Segoe UI", sans-serif;
+  color: #0f172a;
+  background:
+    radial-gradient(circle at top left, rgba(251, 191, 36, 0.12), transparent 26rem),
+    radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.12), transparent 24rem),
+    linear-gradient(180deg, #fffaf5 0%, #f8fafc 52%, #eef2ff 100%);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  color: #0f172a;
+  background: rgba(251, 191, 36, 0.24);
+}
+
+.page-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--panel-gap);
+  min-height: 0;
+}
+
+.tool-surface {
+  border: 1px solid var(--surface-border);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: var(--surface-shadow);
+  backdrop-filter: blur(16px);
+}
+
+.tool-panel__title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tool-panel__title strong {
+  color: #0f172a;
+  font-size: 1rem;
+}
+
+.tool-panel__meta {
+  color: #64748b;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.tool-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}

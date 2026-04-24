@@ -1,8 +1,10 @@
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
 use image::{ExtendedColorType, GenericImageView, ImageEncoder};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::ErrorKind;
 use std::io::Cursor;
+use std::io::Write;
 use std::path::PathBuf;
 
 use fast_image_resize::{FilterType as FirFilterType, ResizeAlg, ResizeOptions, Resizer};
@@ -23,15 +25,6 @@ impl OutputFormat {
             OutputFormat::WebP => "webp",
         }
     }
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ImageInfo {
-    pub path: String,
-    pub name: String,
-    pub size: u64,
-    pub width: u32,
-    pub height: u32,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -297,34 +290,6 @@ fn encode_image(
     })
 }
 
-pub fn get_image_info(path: &str) -> Result<ImageInfo, String> {
-    let path_buf = PathBuf::from(path);
-
-    if !path_buf.exists() {
-        return Err("File does not exist".to_string());
-    }
-
-    let metadata =
-        std::fs::metadata(&path_buf).map_err(|e| format!("Failed to get file metadata: {}", e))?;
-
-    let name = path_buf
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let (width, height) = image::image_dimensions(&path_buf)
-        .map_err(|e| format!("Failed to get image dimensions: {}", e))?;
-
-    Ok(ImageInfo {
-        path: path.to_string(),
-        name,
-        size: metadata.len(),
-        width,
-        height,
-    })
-}
-
 pub fn process_image(
     path: &str,
     format: OutputFormat,
@@ -366,10 +331,11 @@ pub fn process_and_save_image(
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    let output_file_name = format!("{}_compress.{}", file_stem, format.to_str());
-    let output_path = output_dir_buf.join(&output_file_name);
+    let (output_path, mut output_file) = reserve_unique_output_file(&output_dir_buf, file_stem, format)?;
 
-    fs::write(&output_path, &result.data).map_err(|e| format!("Failed to write file: {}", e))?;
+    output_file
+        .write_all(&result.data)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
 
     Ok(SavedImageResult {
         output_path: output_path.to_string_lossy().to_string(),
@@ -379,10 +345,40 @@ pub fn process_and_save_image(
     })
 }
 
+fn reserve_unique_output_file(
+    output_dir: &std::path::Path,
+    file_stem: &str,
+    format: OutputFormat,
+) -> Result<(PathBuf, std::fs::File), String> {
+    for index in 0.. {
+        let suffix = if index == 0 {
+            String::new()
+        } else {
+            format!("_{}", index + 1)
+        };
+
+        let output_file_name = format!("{}_compress{}.{}", file_stem, suffix, format.to_str());
+        let output_path = output_dir.join(output_file_name);
+
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&output_path)
+        {
+            Ok(file) => return Ok((output_path, file)),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Failed to create output file: {}", error)),
+        }
+    }
+
+    Err("Failed to reserve unique output file".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::{DynamicImage, Rgba, RgbaImage};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn sample_image() -> DynamicImage {
         let width = 192;
@@ -451,5 +447,52 @@ mod tests {
         assert_eq!(default_50.data, default_80.data);
         assert_ne!(fast_10.data, default_50.data);
         assert_ne!(default_50.data, best_95.data);
+    }
+
+    #[test]
+    fn process_and_save_image_uses_unique_file_names() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base_dir = std::env::temp_dir().join(format!("kt-img-test-{}", unique));
+        let input_a_dir = base_dir.join("a");
+        let input_b_dir = base_dir.join("b");
+        let output_dir = base_dir.join("out");
+
+        fs::create_dir_all(&input_a_dir).unwrap();
+        fs::create_dir_all(&input_b_dir).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let source = sample_image();
+        let first_path = input_a_dir.join("logo.png");
+        let second_path = input_b_dir.join("logo.jpg");
+        source.save(&first_path).unwrap();
+        source.save(&second_path).unwrap();
+
+        let first_result = process_and_save_image(
+            first_path.to_str().unwrap(),
+            output_dir.to_str().unwrap(),
+            OutputFormat::WebP,
+            80,
+            100,
+            false,
+        )
+        .unwrap();
+        let second_result = process_and_save_image(
+            second_path.to_str().unwrap(),
+            output_dir.to_str().unwrap(),
+            OutputFormat::WebP,
+            80,
+            100,
+            false,
+        )
+        .unwrap();
+
+        assert_ne!(first_result.output_path, second_result.output_path);
+        assert!(PathBuf::from(&first_result.output_path).exists());
+        assert!(PathBuf::from(&second_result.output_path).exists());
+
+        let _ = fs::remove_dir_all(base_dir);
     }
 }

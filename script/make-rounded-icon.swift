@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import Foundation
 
 struct Options {
@@ -35,11 +37,24 @@ func printUsage() {
       --help                     Show this help message
 
     Notes:
-      - Only square source images are supported.
+      - Non-square source images are center-cropped to a square automatically.
       - The output stays square and keeps a transparent border around the rounded icon.
+      - On Linux, ImageMagick (`magick`) is required.
     """
 
     fputs("\(usage)\n", stderr)
+}
+
+func formatCGFloat(_ value: CGFloat) -> String {
+    if value.rounded(.towardZero) == value {
+        return String(Int(value))
+    }
+    return String(format: "%.3f", Double(value))
+}
+
+func formatSignedCGFloat(_ value: CGFloat) -> String {
+    let formatted = formatCGFloat(value.magnitude)
+    return value >= 0 ? "+\(formatted)" : "-\(formatted)"
 }
 
 func parseCGFloat(_ value: String, flag: String) throws -> CGFloat {
@@ -162,6 +177,58 @@ func parseOptions() throws -> Options {
     )
 }
 
+func centeredSquareCropRect(for size: CGSize) -> CGRect {
+    let edge = min(size.width, size.height)
+    return CGRect(
+        x: (size.width - edge) / 2,
+        y: (size.height - edge) / 2,
+        width: edge,
+        height: edge
+    )
+}
+
+func prepareOutputDirectory(for url: URL) throws {
+    do {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+    } catch {
+        throw ScriptError.message("Failed to prepare output directory: \(error)")
+    }
+}
+
+func runCommand(_ program: String, arguments: [String]) throws -> Data {
+    let process = Process()
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = [program] + arguments
+    process.standardOutput = stdoutPipe
+    process.standardError = stderrPipe
+
+    do {
+        try process.run()
+    } catch {
+        throw ScriptError.message("Failed to start \(program): \(error)")
+    }
+
+    process.waitUntilExit()
+
+    let stdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+    let stderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+    guard process.terminationStatus == 0 else {
+        let message = String(data: stderr, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        throw ScriptError.message(message?.isEmpty == false ? message! : "\(program) exited with code \(process.terminationStatus)")
+    }
+
+    return stdout
+}
+
+#if canImport(AppKit)
 func loadSourceImage(from url: URL) throws -> NSImage {
     guard let sourceImage = NSImage(contentsOf: url) else {
         throw ScriptError.message("Unable to load source image: \(url.path)")
@@ -177,18 +244,18 @@ func sourcePixelSize(for image: NSImage) -> CGSize {
     return image.size
 }
 
-func validateSquareImage(_ image: NSImage, sourceURL: URL) throws {
+func validateSourceImage(_ image: NSImage, sourceURL: URL) throws -> CGSize {
     let pixelSize = sourcePixelSize(for: image)
     guard pixelSize.width > 0, pixelSize.height > 0 else {
         throw ScriptError.message("Unable to determine image size: \(sourceURL.path)")
     }
-
-    guard abs(pixelSize.width - pixelSize.height) < 0.5 else {
-        throw ScriptError.message("Only square source images are supported. Got \(Int(pixelSize.width))x\(Int(pixelSize.height)).")
-    }
+    return pixelSize
 }
 
 func renderRoundedIcon(sourceImage: NSImage, options: Options) throws -> Data {
+    let sourceSize = try validateSourceImage(sourceImage, sourceURL: options.inputURL)
+    sourceImage.size = sourceSize
+
     let canvasSize = CGSize(width: options.canvasSize, height: options.canvasSize)
     let targetRect = CGRect(
         x: options.inset,
@@ -196,6 +263,7 @@ func renderRoundedIcon(sourceImage: NSImage, options: Options) throws -> Data {
         width: options.canvasSize - options.inset * 2,
         height: options.canvasSize - options.inset * 2
     )
+    let sourceCropRect = centeredSquareCropRect(for: sourceSize)
 
     guard
         let bitmap = NSBitmapImageRep(
@@ -227,7 +295,6 @@ func renderRoundedIcon(sourceImage: NSImage, options: Options) throws -> Data {
     NSRect(origin: .zero, size: canvasSize).fill()
 
     if options.shadowEnabled {
-        // Draw the shadow from the rounded shape itself so the soft edge stays outside the clipped artwork.
         NSGraphicsContext.current?.saveGraphicsState()
 
         let shadow = NSShadow()
@@ -256,7 +323,7 @@ func renderRoundedIcon(sourceImage: NSImage, options: Options) throws -> Data {
 
     sourceImage.draw(
         in: targetRect,
-        from: NSRect(origin: .zero, size: sourceImage.size),
+        from: sourceCropRect,
         operation: .sourceOver,
         fraction: 1.0,
         respectFlipped: false,
@@ -272,22 +339,166 @@ func renderRoundedIcon(sourceImage: NSImage, options: Options) throws -> Data {
 
 func writeOutput(_ data: Data, to url: URL) throws {
     do {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        try prepareOutputDirectory(for: url)
         try data.write(to: url)
     } catch {
         throw ScriptError.message("Failed to write output PNG: \(error)")
     }
 }
 
-do {
-    let options = try parseOptions()
+func processIcon(options: Options) throws {
     let sourceImage = try loadSourceImage(from: options.inputURL)
-    try validateSquareImage(sourceImage, sourceURL: options.inputURL)
     let pngData = try renderRoundedIcon(sourceImage: sourceImage, options: options)
     try writeOutput(pngData, to: options.outputURL)
+}
+#else
+func loadSourceImageDimensions(from url: URL) throws -> CGSize {
+    let output = try runCommand(
+        "magick",
+        arguments: ["identify", "-format", "%w %h", url.path]
+    )
+
+    guard
+        let raw = String(data: output, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+        !raw.isEmpty
+    else {
+        throw ScriptError.message("Unable to determine image size: \(url.path)")
+    }
+
+    let parts = raw.split(separator: " ")
+    guard
+        parts.count == 2,
+        let width = Double(parts[0]),
+        let height = Double(parts[1]),
+        width > 0,
+        height > 0
+    else {
+        throw ScriptError.message("Unable to determine image size: \(url.path)")
+    }
+
+    return CGSize(width: width, height: height)
+}
+
+func processIcon(options: Options) throws {
+    let sourceSize = try loadSourceImageDimensions(from: options.inputURL)
+    let cropRect = centeredSquareCropRect(for: sourceSize)
+    let canvasPixels = Int(options.canvasSize)
+    let drawablePixels = Int(options.canvasSize - options.inset * 2)
+
+    guard canvasPixels > 0, drawablePixels > 0 else {
+        throw ScriptError.message("Canvas size is invalid for ImageMagick rendering")
+    }
+
+    try prepareOutputDirectory(for: options.outputURL)
+
+    let fileManager = FileManager.default
+    let tempDirectory = fileManager.temporaryDirectory
+        .appendingPathComponent("make-rounded-icon-\(UUID().uuidString)", isDirectory: true)
+
+    do {
+        try fileManager.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    } catch {
+        throw ScriptError.message("Failed to create temporary directory: \(error)")
+    }
+
+    defer {
+        try? fileManager.removeItem(at: tempDirectory)
+    }
+
+    let squareURL = tempDirectory.appendingPathComponent("square.png")
+    let maskURL = tempDirectory.appendingPathComponent("mask.png")
+    let roundedURL = tempDirectory.appendingPathComponent("rounded.png")
+    let canvasURL = tempDirectory.appendingPathComponent("canvas.png")
+    let shadowedURL = tempDirectory.appendingPathComponent("shadowed.png")
+
+    _ = try runCommand(
+        "magick",
+        arguments: [
+            options.inputURL.path,
+            "-crop", "\(formatCGFloat(cropRect.width))x\(formatCGFloat(cropRect.height))+\(formatCGFloat(cropRect.origin.x))+\(formatCGFloat(cropRect.origin.y))",
+            "+repage",
+            "-resize", "\(drawablePixels)x\(drawablePixels)!",
+            squareURL.path
+        ]
+    )
+
+    _ = try runCommand(
+        "magick",
+        arguments: [
+            "-size", "\(drawablePixels)x\(drawablePixels)",
+            "xc:black",
+            "-fill", "white",
+            "-draw", "roundrectangle 0,0,\(drawablePixels - 1),\(drawablePixels - 1),\(formatCGFloat(options.cornerRadius)),\(formatCGFloat(options.cornerRadius))",
+            maskURL.path
+        ]
+    )
+
+    _ = try runCommand(
+        "magick",
+        arguments: [
+            squareURL.path,
+            maskURL.path,
+            "-alpha", "off",
+            "-compose", "CopyOpacity",
+            "-composite",
+            roundedURL.path
+        ]
+    )
+
+    _ = try runCommand(
+        "magick",
+        arguments: [
+            "-size", "\(canvasPixels)x\(canvasPixels)",
+            "xc:none",
+            roundedURL.path,
+            "-gravity", "center",
+            "-composite",
+            canvasURL.path
+        ]
+    )
+
+    if options.shadowEnabled {
+        let shadowOpacity = Int((options.shadowAlpha * 100).rounded())
+        _ = try runCommand(
+            "magick",
+            arguments: [
+                canvasURL.path,
+                "(",
+                "+clone",
+                "-background", "black",
+                "-shadow", "\(shadowOpacity)x\(formatCGFloat(options.shadowBlur))\(formatSignedCGFloat(options.shadowOffsetX))\(formatSignedCGFloat(options.shadowOffsetY))",
+                ")",
+                "+swap",
+                "-background", "none",
+                "-layers", "merge",
+                "+repage",
+                shadowedURL.path
+            ]
+        )
+
+        _ = try runCommand(
+            "magick",
+            arguments: [
+                shadowedURL.path,
+                "-background", "none",
+                "-gravity", "center",
+                "-extent", "\(canvasPixels)x\(canvasPixels)",
+                options.outputURL.path
+            ]
+        )
+    } else {
+        _ = try runCommand(
+            "magick",
+            arguments: [canvasURL.path, options.outputURL.path]
+        )
+    }
+}
+#endif
+
+do {
+    let options = try parseOptions()
+    try processIcon(options: options)
 } catch ScriptError.usage {
     printUsage()
     exit(1)

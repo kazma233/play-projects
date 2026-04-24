@@ -30,10 +30,7 @@ md5 = "0.8.0"
 sha1 = "0.10.6"
 tauri-plugin-dialog = "2"
 qrcode = "0.14"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
-fast_image_resize = { version = "6.0", features = ["image", "rayon"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 tauri-plugin-fs = "2.4"
 tauri-plugin-clipboard-manager = "2.3"
 sysinfo = "0.38"
-imagesize = "0.14.0"
-webp = "0.3"

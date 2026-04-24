@@ -68,14 +68,6 @@ export const toolItems = [
     eyebrow: '系统诊断',
     description: '查看本机端口占用、协议、地址与进程信息。',
     highlights: ['端口扫描', '筛选检索', '快速终止']
-  },
-  {
-    label: '图片处理',
-    path: '/image',
-    icon: '🖼️',
-    eyebrow: '图片工具',
-    description: '支持图片批量压缩、转码与预览。',
-    highlights: ['批处理', '格式转换', '压缩对比']
   }
 ]
 
