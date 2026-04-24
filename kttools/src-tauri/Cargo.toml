@@ -33,4 +33,3 @@ qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png"] }
 tauri-plugin-fs = "2.4"
 tauri-plugin-clipboard-manager = "2.3"
-sysinfo = "0.38"

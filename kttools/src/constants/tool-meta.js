@@ -60,14 +60,6 @@ export const toolItems = [
     eyebrow: '分享工具',
     description: '支持二维码生成、自定义颜色尺寸、保存和复制。',
     highlights: ['颜色控制', 'PNG 导出', '剪贴板']
-  },
-  {
-    label: '端口管理',
-    path: '/ports',
-    icon: '🔌',
-    eyebrow: '系统诊断',
-    description: '查看本机端口占用、协议、地址与进程信息。',
-    highlights: ['端口扫描', '筛选检索', '快速终止']
   }
 ]
 

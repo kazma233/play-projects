@@ -15,7 +15,6 @@ app icon 由AI生成
 - **SHA1 加密** - 文件SHA1哈希计算
 - **文件名格式化** - 批量文件重命名工具
 - **二维码生成** - 自定义样式的二维码生成
-- **端口占用管理** - 查看和管理系统端口占用情况
 
 ## 快速开始
 
@@ -50,12 +49,11 @@ npm run tauri build -- --bundles rpm
 ```
 ├── src/                    # Vue 前端源码
 │   ├── components/         # 组件
-│   ├── views/             # 页面
-│   │   └── PortsKiller.vue # 端口管理页面
+│   ├── views/              # 页面
 │   └── router/            # 路由配置
 ├── src-tauri/             # Rust 后端源码
 │   ├── src/
-│   │   └── lib.rs         # 主要逻辑，包含端口管理功能
+│   │   └── lib.rs         # 主要逻辑
 │   └── Cargo.toml         # Rust 依赖配置
 └── README.md              # 项目说明
 ```

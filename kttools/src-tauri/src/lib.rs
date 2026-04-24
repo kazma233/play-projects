@@ -9,7 +9,6 @@ use tauri::image::Image;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 mod datetime;
-mod ports;
 
 #[tauri::command]
 fn base64_encode(input: &str, url_mode: bool) -> String {
@@ -184,19 +183,6 @@ async fn copy_qr_code_to_clipboard(
     Ok(())
 }
 
-#[tauri::command]
-fn get_port_list() -> Result<Vec<ports::PortInfo>, String> {
-    ports::get_port_list().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn kill_process(target: ports::KillTarget) -> Result<String, String> {
-    let ports_list = ports::get_port_list().map_err(|e| e.to_string())?;
-    ports::kill_process(&target, &ports_list)
-        .await
-        .map_err(|e| e.to_string())
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -216,8 +202,6 @@ pub fn run() {
             generate_qr_code,
             generate_qr_code_png,
             copy_qr_code_to_clipboard,
-            get_port_list,
-            kill_process,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
