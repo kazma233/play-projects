@@ -1,0 +1,17 @@
+[package]
+name = "kt-port"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
+slint = { version = "1.16.1", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "compat-1-2"] }
+serde = { version = "1.0.228", features = ["derive"] }
+sysinfo = "0.38.4"
+thiserror = "2.0.18"
+icu_segmenter = { version = "2.2.0", default-features = false, features = ["compiled_data", "auto"] }
+i-slint-core = { version = "=1.16.1", default-features = false, features = ["std"] }
+
+[build-dependencies]
+slint-build = "1.16.1"

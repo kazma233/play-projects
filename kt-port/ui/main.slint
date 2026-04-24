@@ -1,0 +1,545 @@
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+
+component HeaderCell inherits Rectangle {
+    in property <string> value;
+    in property <length> cell-width;
+    in property <length> min-cell-width: cell-width;
+    in property <float> stretch: 0;
+    in property <bool> sortable: false;
+    in property <bool> active: false;
+    in property <string> direction: "";
+    callback clicked();
+
+    height: 34px;
+    background: active ? #dbeafe : transparent;
+    min-width: min-cell-width;
+    preferred-width: cell-width;
+    horizontal-stretch: stretch;
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        enabled: root.sortable;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: 4px;
+        padding-left: 6px;
+        padding-right: 6px;
+
+        Text {
+            text: value;
+            color: active ? #1d4ed8 : #0f172a;
+            font-weight: 700;
+            horizontal-stretch: 1;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        if root.sortable : Text {
+            width: 12px;
+            text: root.active ? (root.direction == "desc" ? "v" : "^") : "";
+            color: #2563eb;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component RowCell inherits Rectangle {
+    in property <string> value;
+    in property <length> cell-width;
+    in property <length> min-cell-width: cell-width;
+    in property <float> stretch: 0;
+
+    height: 36px;
+    background: transparent;
+    min-width: min-cell-width;
+    preferred-width: cell-width;
+    horizontal-stretch: stretch;
+
+    Text {
+        text: value;
+        width: parent.width;
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component RowCellCentered inherits Rectangle {
+    in property <string> value;
+    in property <length> cell-width;
+    in property <length> min-cell-width: cell-width;
+    in property <float> stretch: 0;
+
+    height: 36px;
+    background: transparent;
+    min-width: min-cell-width;
+    preferred-width: cell-width;
+    horizontal-stretch: stretch;
+
+    Text {
+        text: value;
+        width: parent.width;
+        height: parent.height;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component DetailItem inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+
+    min-height: 54px;
+    background: #f8fafc;
+    border-width: 1px;
+    border-color: #e2e8f0;
+
+    VerticalLayout {
+        spacing: 4px;
+        padding: 10px;
+
+        Text {
+            text: label;
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        Text {
+            text: value;
+            color: #0f172a;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export struct PortRow {
+    port: string,
+    protocol: string,
+    status: string,
+    local_addr: string,
+    remote_addr: string,
+    process_name: string,
+    pid: string,
+    user: string,
+    selected: bool,
+    is_current: bool,
+}
+
+export component AppWindow inherits Window {
+    in-out property <string> filter_text: "";
+    in-out property <[PortRow]> rows: [];
+    in-out property <string> status_text: "Ready";
+    in-out property <bool> has_selection: false;
+    in-out property <[string]> status_options: ["全部状态"];
+    in-out property <int> status_filter_index: 0;
+    in-out property <[string]> protocol_options: ["全部协议"];
+    in-out property <int> protocol_filter_index: 0;
+    in-out property <string> sort_field: "port";
+    in-out property <string> sort_direction: "asc";
+    in-out property <bool> confirm_visible: false;
+    in-out property <string> confirm_message: "";
+    in-out property <string> detail_title: "未选中端口记录";
+    in-out property <string> detail_port: "-";
+    in-out property <string> detail_protocol: "-";
+    in-out property <string> detail_status: "-";
+    in-out property <string> detail_pid: "-";
+    in-out property <string> detail_process_name: "-";
+    in-out property <string> detail_user: "-";
+    in-out property <string> detail_local_addr: "-";
+    in-out property <string> detail_remote_addr: "-";
+    in-out property <string> detail_process_path: "-";
+    in-out property <string> detail_command_line: "-";
+    in-out property <string> detail_current_dir: "-";
+    in-out property <string> detail_parent_pid: "-";
+    in-out property <string> detail_start_time: "-";
+    in-out property <string> detail_run_time: "-";
+    in-out property <string> detail_memory: "-";
+
+    callback refresh();
+    callback filter_changed(string);
+    callback kill_selected();
+    callback toggle_row_selection(int);
+    callback show_row_details(int);
+    callback status_filter_changed(int, string);
+    callback protocol_filter_changed(int, string);
+    callback sort_changed(string);
+    callback confirm_kill();
+    callback cancel_kill();
+
+    title: "kt-port";
+    min-width: 1100px;
+    min-height: 760px;
+    preferred-width: 1420px;
+    preferred-height: 900px;
+
+    VerticalLayout {
+        spacing: 10px;
+        padding: 12px;
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            ComboBox {
+                min-width: 112px;
+                preferred-width: 160px;
+                model: root.protocol_options;
+                current-index <=> root.protocol_filter_index;
+                selected(value) => {
+                    root.protocol_filter_changed(self.current-index, value);
+                }
+            }
+
+            ComboBox {
+                min-width: 112px;
+                preferred-width: 160px;
+                model: root.status_options;
+                current-index <=> root.status_filter_index;
+                selected(value) => {
+                    root.status_filter_changed(self.current-index, value);
+                }
+            }
+
+            LineEdit {
+                horizontal-stretch: 1;
+                text <=> root.filter_text;
+                placeholder-text: "Search port, pid, protocol, state, process, address or user";
+                edited => { root.filter_changed(self.text); }
+                accepted => { root.filter_changed(self.text); }
+            }
+
+            Button {
+                text: "Refresh";
+                clicked => { root.refresh(); }
+            }
+
+            Button {
+                text: "Kill Selected";
+                enabled: root.has_selection;
+                clicked => { root.kill_selected(); }
+            }
+        }
+
+        Rectangle {
+            height: 34px;
+            background: #e2e8f0;
+
+            HorizontalLayout {
+                spacing: 6px;
+                padding-left: 8px;
+                padding-right: 8px;
+
+                HeaderCell {
+                    value: "Sel";
+                    cell-width: 52px;
+                    min-cell-width: 52px;
+                }
+                HeaderCell {
+                    value: "Port";
+                    cell-width: 70px;
+                    min-cell-width: 56px;
+                    sortable: true;
+                    active: root.sort_field == "port";
+                    direction: root.sort_direction;
+                    clicked => { root.sort_changed("port"); }
+                }
+                HeaderCell {
+                    value: "Proto";
+                    cell-width: 70px;
+                    min-cell-width: 56px;
+                    sortable: true;
+                    active: root.sort_field == "protocol";
+                    direction: root.sort_direction;
+                    clicked => { root.sort_changed("protocol"); }
+                }
+                HeaderCell {
+                    value: "Status";
+                    cell-width: 120px;
+                    min-cell-width: 90px;
+                    sortable: true;
+                    active: root.sort_field == "status";
+                    direction: root.sort_direction;
+                    clicked => { root.sort_changed("status"); }
+                }
+                HeaderCell { value: "Local"; cell-width: 250px; min-cell-width: 140px; stretch: 2.2; }
+                HeaderCell { value: "Remote"; cell-width: 250px; min-cell-width: 140px; stretch: 2.2; }
+                HeaderCell {
+                    value: "Process";
+                    cell-width: 190px;
+                    min-cell-width: 120px;
+                    stretch: 1.6;
+                    sortable: true;
+                    active: root.sort_field == "process";
+                    direction: root.sort_direction;
+                    clicked => { root.sort_changed("process"); }
+                }
+                HeaderCell {
+                    value: "PID";
+                    cell-width: 90px;
+                    min-cell-width: 72px;
+                    sortable: true;
+                    active: root.sort_field == "pid";
+                    direction: root.sort_direction;
+                    clicked => { root.sort_changed("pid"); }
+                }
+                HeaderCell {
+                    value: "User";
+                    cell-width: 110px;
+                    min-cell-width: 84px;
+                    stretch: 1.1;
+                    sortable: true;
+                    active: root.sort_field == "user";
+                    direction: root.sort_direction;
+                    clicked => { root.sort_changed("user"); }
+                }
+            }
+        }
+
+        Rectangle {
+            min-height: 0px;
+
+            ScrollView {
+                min-height: 0px;
+
+                VerticalLayout {
+                    spacing: 0px;
+
+                    for row[index] in root.rows : Rectangle {
+                        height: 36px;
+                        border-width: 1px;
+                        border-color: #e2e8f0;
+                        background: row.is_current ? #eff6ff : (Math.mod(index, 2) == 0 ? #ffffff : #f8fafc);
+
+                        TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.show_row_details(index);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            padding-left: 8px;
+                            padding-right: 8px;
+
+                            Rectangle {
+                                width: 52px;
+                                height: parent.height;
+                                background: transparent;
+                                z: 1;
+
+                                picker := CheckBox {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    checked: row.selected;
+                                    toggled => {
+                                        root.toggle_row_selection(index);
+                                    }
+                                }
+                            }
+
+                            RowCellCentered { value: row.port; cell-width: 70px; min-cell-width: 56px; }
+                            RowCellCentered { value: row.protocol; cell-width: 70px; min-cell-width: 56px; }
+                            RowCellCentered { value: row.status; cell-width: 120px; min-cell-width: 90px; }
+                            RowCell { value: row.local_addr; cell-width: 250px; min-cell-width: 140px; stretch: 2.2; }
+                            RowCell { value: row.remote_addr; cell-width: 250px; min-cell-width: 140px; stretch: 2.2; }
+                            RowCell { value: row.process_name; cell-width: 190px; min-cell-width: 120px; stretch: 1.6; }
+                            RowCellCentered { value: row.pid; cell-width: 90px; min-cell-width: 72px; }
+                            RowCell { value: row.user; cell-width: 110px; min-cell-width: 84px; stretch: 1.1; }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            min-height: 220px;
+            background: #ffffff;
+            border-width: 1px;
+            border-color: #cbd5e1;
+
+            VerticalLayout {
+                spacing: 10px;
+                padding: 12px;
+
+                Text {
+                    text: root.detail_title;
+                    color: #0f172a;
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    DetailItem { label: "Port"; value: root.detail_port; horizontal-stretch: 1; }
+                    DetailItem { label: "Protocol"; value: root.detail_protocol; horizontal-stretch: 1; }
+                    DetailItem { label: "Status"; value: root.detail_status; horizontal-stretch: 1; }
+                    DetailItem { label: "PID"; value: root.detail_pid; horizontal-stretch: 1; }
+                    DetailItem { label: "User"; value: root.detail_user; horizontal-stretch: 1; }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    DetailItem { label: "Process"; value: root.detail_process_name; horizontal-stretch: 2; }
+                    DetailItem { label: "Parent PID"; value: root.detail_parent_pid; horizontal-stretch: 1; }
+                    DetailItem { label: "Run Time"; value: root.detail_run_time; horizontal-stretch: 1; }
+                    DetailItem { label: "Memory"; value: root.detail_memory; horizontal-stretch: 1; }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    DetailItem { label: "Local Address"; value: root.detail_local_addr; horizontal-stretch: 1; }
+                    DetailItem { label: "Remote Address"; value: root.detail_remote_addr; horizontal-stretch: 1; }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    DetailItem { label: "Executable Path"; value: root.detail_process_path; horizontal-stretch: 1; }
+                    DetailItem { label: "Current Directory"; value: root.detail_current_dir; horizontal-stretch: 1; }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    DetailItem { label: "Command Line"; value: root.detail_command_line; horizontal-stretch: 2; }
+                    DetailItem { label: "Start Time"; value: root.detail_start_time; horizontal-stretch: 1; }
+                }
+            }
+        }
+
+        Text {
+            text: root.status_text;
+            color: #475569;
+        }
+    }
+
+    if root.confirm_visible : Rectangle {
+        background: #00000088;
+        width: parent.width;
+        height: parent.height;
+
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            clicked => {
+                // Swallow clicks so the background content stays inert while the dialog is open.
+            }
+        }
+
+        Rectangle {
+            width: 560px;
+            height: 260px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: #ffffff;
+            border-width: 1px;
+            border-color: #7f1d1d;
+
+            VerticalLayout {
+                spacing: 0px;
+
+                Rectangle {
+                    height: 44px;
+                    background: #991b1b;
+
+                    Text {
+                        text: "确认终止";
+                        width: parent.width;
+                        height: parent.height;
+                        font-weight: 700;
+                        font-size: 18px;
+                        color: #ffffff;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 12px;
+                    padding: 16px;
+
+                    Rectangle {
+                        min-height: 0px;
+                        background: #ffffff;
+                        border-width: 1px;
+                        border-color: #e2e8f0;
+
+                        Text {
+                            text: root.confirm_message;
+                            width: parent.width - 16px;
+                            x: 8px;
+                            y: 8px;
+                            color: #0f172a;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: end;
+
+                        Rectangle {
+                            width: 96px;
+                            height: 36px;
+                            background: #7f1d1d;
+
+                            Text {
+                                text: "取消";
+                                width: parent.width;
+                                height: parent.height;
+                                color: #ffffff;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => { root.cancel_kill(); }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 120px;
+                            height: 36px;
+                            background: #b91c1c;
+
+                            Text {
+                                text: "确认 Kill";
+                                width: parent.width;
+                                height: parent.height;
+                                color: #ffffff;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => { root.confirm_kill(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
