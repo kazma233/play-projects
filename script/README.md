@@ -12,15 +12,24 @@
 4. 支持圆角半径配置
 5. 支持外阴影开关
 6. 支持阴影透明度、模糊半径、偏移配置
-7. macOS 可直接使用原生绘制，Linux 需安装 `ImageMagick`
+7. 提供 `macOS`/`Linux` 两份平台专用脚本
 
 ### 使用方法
+
+自动分发入口：
 
 ```bash
 swift script/make-rounded-icon.swift <input> <output> [options]
 ```
 
-默认生成一个 `1024x1024` 的透明 PNG，原图会被裁成圆角并保留一圈透明边距。
+平台专用入口：
+
+```bash
+swift script/make-rounded-icon-macos.swift <input> <output> [options]
+swift script/make-rounded-icon-linux.swift <input> <output> [options]
+```
+
+默认生成一个 `1024x1024` 的透明 PNG，原图会被裁成圆角并保留一圈透明边距。产物构建、CI 或平台脚本里，建议直接调用对应平台的专用脚本。
 
 ### 示例
 
@@ -33,7 +42,7 @@ swift script/make-rounded-icon.swift input.png output.png
 关闭阴影并调整留边和圆角：
 
 ```bash
-swift script/make-rounded-icon.swift input.png output.png \
+swift script/make-rounded-icon-macos.swift input.png output.png \
   --inset 120 \
   --corner-radius 180 \
   --shadow off
@@ -42,7 +51,7 @@ swift script/make-rounded-icon.swift input.png output.png \
 自定义完整参数：
 
 ```bash
-swift script/make-rounded-icon.swift input.png output.png \
+swift script/make-rounded-icon-linux.swift input.png output.png \
   --canvas 1024 \
   --inset 96 \
   --corner-radius 220 \
@@ -76,7 +85,9 @@ swift script/make-rounded-icon.swift input.png output.png \
 
 1. 输入图片会先被裁成正方形，默认使用中心区域
 2. 输出始终为正方形 PNG
-3. 如果 `--inset` 过大，或者 `--corner-radius` 超过内部图形尺寸上限，脚本会报错退出
+3. `make-rounded-icon-macos.swift` 仅支持 macOS
+4. `make-rounded-icon-linux.swift` 仅支持 Linux，且要求系统已安装 `ImageMagick`
+5. 如果 `--inset` 过大，或者 `--corner-radius` 超过内部图形尺寸上限，脚本会报错退出
 
 ### 常见报错
 
