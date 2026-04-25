@@ -2,6 +2,9 @@
 name = "kt-port"
 version = "0.1.0"
 edition = "2024"
+description = "A desktop port viewer and process killer"
+homepage = "https:///kt-port.kazma.me"
+repository = "https://github.com/kazma233/play-projects/kt-port"
 
 [dependencies]
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }

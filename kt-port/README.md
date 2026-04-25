@@ -23,7 +23,7 @@ cargo run
 ## 构建 Release
 
 ```bash
-cargo build --release
+cargo build --release --locked
 ```
 
 构建产物在：
@@ -32,8 +32,35 @@ cargo build --release
 target/release/kt-port
 ```
 
+## 打包
+
+先安装 `cargo-packager`：
+
+```bash
+cargo install cargo-packager --locked
+```
+
+执行打包：
+
+```bash
+cargo packager --release
+
+# or
+cargo packager --release --formats appimage
+```
+
+打包配置在 `Packager.toml`，产物默认输出到 `dist/`。
+
 ## 说明
 
 - 项目使用 `iced` 构建界面
 - 端口扫描和终止逻辑在 `src/ports` 下
 - 不同平台会走对应的扫描器实现
+
+## 应用图标
+
+使用 AI 生成
+
+## License
+
+MIT
