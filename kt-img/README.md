@@ -103,13 +103,7 @@ npm run tauri build -- --bundles rpm
 
 ## 应用图标
 
-图标使用声明：
-
-作者：[_Z eD_](https://www.artstation.com/trungbui42)
-
-作品：[doodle](https://www.artstation.com/artwork/AZbzlX)
-
-作为爱好开发使用，如有不妥随时移除
+使用 AI 生成
 
 ## License
 

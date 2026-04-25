@@ -57,3 +57,11 @@ npm run tauri build -- --bundles rpm
 │   └── Cargo.toml         # Rust 依赖配置
 └── README.md              # 项目说明
 ```
+
+## 应用图标
+
+使用 AI 生成
+
+## License
+
+MIT

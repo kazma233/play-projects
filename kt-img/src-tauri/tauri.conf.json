@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "kt-img",
+  "productName": "KTImg",
   "version": "0.1.0",
-  "identifier": "com.kazma.ktimg",
+  "identifier": "me.kazma.kt-img",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "kt-img",
+        "title": "KTImg",
         "width": 1400,
         "height": 900,
         "minWidth": 900,
@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Utility",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

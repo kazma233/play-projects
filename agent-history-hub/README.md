@@ -46,13 +46,7 @@ pnpm tauri build
 
 ## 应用图标
 
-图标使用声明：
-
-作者：[Enze Fu](https://www.artstation.com/fuenze)
-
-作品：[Aoi's Morning, Putting on Tights](https://www.artstation.com/artwork/dywQkA)
-
-作为爱好开发使用，如有不妥随时移除
+使用 AI 生成
 
 ## License
 
