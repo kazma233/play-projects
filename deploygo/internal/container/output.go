@@ -58,10 +58,10 @@ func (w *prefixedLineWriter) flush() error {
 	prefixedOutputMu.Lock()
 	defer prefixedOutputMu.Unlock()
 
-	if _, err := io.WriteString(w.dest, w.prefix); err != nil {
-		return err
-	}
-	if _, err := w.dest.Write(w.buffer.Bytes()); err != nil {
+	line := make([]byte, 0, len(w.prefix)+w.buffer.Len())
+	line = append(line, w.prefix...)
+	line = append(line, w.buffer.Bytes()...)
+	if _, err := w.dest.Write(line); err != nil {
 		return err
 	}
 

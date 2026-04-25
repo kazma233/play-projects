@@ -2,8 +2,10 @@ package stage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,8 @@ type blockingRuntime struct {
 	mu             sync.Mutex
 	nextID         int
 	containerBuild map[string]string
+	pullGates      map[string]chan struct{}
+	pullErrors     map[string]error
 	gates          map[string]chan struct{}
 	events         []string
 	active         int
@@ -35,7 +39,19 @@ func (r *blockingRuntime) Name() string {
 	return "fake"
 }
 
-func (r *blockingRuntime) PullImage(context.Context, string) error {
+func (r *blockingRuntime) PullImage(ctx context.Context, image string) error {
+	if gate := r.lookupPullGate(image); gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	if err := r.lookupPullError(image); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -45,7 +61,11 @@ func (r *blockingRuntime) CreateContainer(_ context.Context, cfg *container.Cont
 
 	id := fmt.Sprintf("container-%d", r.nextID)
 	r.nextID++
-	r.containerBuild[id] = cfg.Image
+	buildName := cfg.BuildName
+	if buildName == "" {
+		buildName = cfg.Image
+	}
+	r.containerBuild[id] = buildName
 	return id, nil
 }
 
@@ -107,6 +127,18 @@ func (r *blockingRuntime) lookupBuild(containerID string) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.containerBuild[containerID]
+}
+
+func (r *blockingRuntime) lookupPullGate(image string) chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pullGates[image]
+}
+
+func (r *blockingRuntime) lookupPullError(image string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pullErrors[image]
 }
 
 func (r *blockingRuntime) lookupGate(buildName string) chan struct{} {
@@ -213,6 +245,38 @@ func TestRunBuildsHonorsSyncBuilds(t *testing.T) {
 	assertEventOrder(t, events, "start:frontend", "start:package")
 	assertEventOrder(t, events, "start:backend", "start:package")
 	assertEventOrder(t, events, "end:package", "start:docs")
+}
+
+func TestRunBuildsCancelsAsyncBatchOnFirstFailure(t *testing.T) {
+	runtime := newBlockingRuntime(nil)
+	runtime.pullGates = map[string]chan struct{}{
+		"frontend-image": make(chan struct{}),
+		"backend-image":  make(chan struct{}),
+	}
+	runtime.pullErrors = map[string]error{
+		"frontend-image": errors.New("frontend pull failed"),
+	}
+
+	builds := []config.StageConfig{
+		{Name: "frontend", Image: "frontend-image", WorkingDir: "/work", Commands: []string{"build frontend"}},
+		{Name: "backend", Image: "backend-image", WorkingDir: "/work", Commands: []string{"build backend"}},
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunBuilds(runtime, builds, t.TempDir())
+	}()
+
+	close(runtime.pullGates["frontend-image"])
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), `build "frontend" failed: failed to pull image frontend-image: frontend pull failed`) {
+			t.Fatalf("RunBuilds() error = %v, want frontend pull failure", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunBuilds() did not cancel after the first failure")
+	}
 }
 
 func waitForBuildStart(t *testing.T, started <-chan string) string {

@@ -1,6 +1,7 @@
 package stage
 
 import (
+	"context"
 	"deploygo/internal/config"
 	"deploygo/internal/container"
 	"fmt"
@@ -32,15 +33,15 @@ func RunBuilds(runtime container.ContainerRuntime, builds []config.StageConfig, 
 			build: &builds[i],
 			index: i + 1,
 		}
-		if err := scheduler.Schedule(entry); err != nil {
+		if err := scheduler.schedule(entry); err != nil {
 			return err
 		}
 	}
 
-	return scheduler.Flush()
+	return scheduler.flush()
 }
 
-func (s *buildScheduler) Schedule(entry queuedBuild) error {
+func (s *buildScheduler) schedule(entry queuedBuild) error {
 	if entry.build == nil {
 		return fmt.Errorf("build is nil")
 	}
@@ -50,14 +51,14 @@ func (s *buildScheduler) Schedule(entry queuedBuild) error {
 		return nil
 	}
 
-	if err := s.Flush(); err != nil {
+	if err := s.flush(); err != nil {
 		return err
 	}
 
-	return s.runEntry(entry)
+	return s.runEntry(context.Background(), entry)
 }
 
-func (s *buildScheduler) Flush() error {
+func (s *buildScheduler) flush() error {
 	if len(s.asyncBatch) == 0 {
 		return nil
 	}
@@ -70,36 +71,35 @@ func (s *buildScheduler) Flush() error {
 
 func (s *buildScheduler) runAsyncBatch(batch []queuedBuild) error {
 	if len(batch) == 1 {
-		return s.runEntry(batch[0])
+		return s.runEntry(context.Background(), batch[0])
 	}
 
 	log.Printf("Running async build batch with %d builds", len(batch))
 
-	errCh := make(chan error, len(batch))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var wg sync.WaitGroup
+	var once sync.Once
+	var firstErr error
 
 	for _, entry := range batch {
 		wg.Add(1)
 		go func(entry queuedBuild) {
 			defer wg.Done()
-			if err := s.runEntry(entry); err != nil {
-				errCh <- err
+			if err := s.runEntry(ctx, entry); err != nil {
+				once.Do(func() {
+					firstErr = err
+					cancel()
+				})
 			}
 		}(entry)
 	}
 
 	wg.Wait()
-	close(errCh)
-
-	for err := range errCh {
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return firstErr
 }
 
-func (s *buildScheduler) runEntry(entry queuedBuild) error {
-	return runBuildEntry(s.runtime, entry.build, s.projectDir, entry.index, s.total)
+func (s *buildScheduler) runEntry(ctx context.Context, entry queuedBuild) error {
+	return runBuildEntry(ctx, s.runtime, entry.build, s.projectDir, entry.index, s.total)
 }

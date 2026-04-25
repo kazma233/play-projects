@@ -14,6 +14,7 @@ import (
 type DockerRuntime struct {
 	command string
 	labels  containerLabelRegistry
+	pulls   imagePullRegistry
 }
 
 func NewDockerRuntime() (*DockerRuntime, error) {
@@ -24,6 +25,7 @@ func NewDockerRuntime() (*DockerRuntime, error) {
 	return &DockerRuntime{
 		command: cmd,
 		labels:  newContainerLabelRegistry(),
+		pulls:   newImagePullRegistry(),
 	}, nil
 }
 
@@ -42,19 +44,10 @@ func (d *DockerRuntime) runCommand(ctx context.Context, args ...string) (string,
 }
 
 func (d *DockerRuntime) PullImage(ctx context.Context, image string) error {
-	// 检查本地是否已存在该镜像
-	exists, err := d.imageExists(ctx, image)
-	if err != nil {
-		return fmt.Errorf("failed to check image existence: %w", err)
-	}
-	if exists {
-		log.Printf("Image '%s' already exists locally, skipping pull", image)
-		return nil
-	}
-
-	log.Printf("Pulling image '%s'...", image)
-	_, err = d.runCommand(ctx, "pull", image)
-	return err
+	return pullImageIfMissing(ctx, &d.pulls, image, d.imageExists, func(ctx context.Context, image string) error {
+		_, err := d.runCommand(ctx, "pull", image)
+		return err
+	})
 }
 
 // imageExists 检查本地是否存在指定镜像

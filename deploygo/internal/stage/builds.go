@@ -13,7 +13,7 @@ import (
 )
 
 func RunBuild(runtime container.ContainerRuntime, build *config.StageConfig, projectDir string) error {
-	return runBuildEntry(runtime, build, projectDir, 0, 0)
+	return runBuildEntry(context.Background(), runtime, build, projectDir, 0, 0)
 }
 
 func shortContainerID(containerID string) string {
@@ -23,7 +23,7 @@ func shortContainerID(containerID string) string {
 	return containerID[:12]
 }
 
-func runBuildEntry(runtime container.ContainerRuntime, build *config.StageConfig, projectDir string, index, total int) error {
+func runBuildEntry(ctx context.Context, runtime container.ContainerRuntime, build *config.StageConfig, projectDir string, index, total int) error {
 	if build == nil {
 		return fmt.Errorf("build is nil")
 	}
@@ -34,16 +34,14 @@ func runBuildEntry(runtime container.ContainerRuntime, build *config.StageConfig
 		log.Printf("Running build: %s (runtime: %s, image: %s)", build.Name, runtime.Name(), build.Image)
 	}
 
-	if err := runBuild(runtime, *build, projectDir); err != nil {
+	if err := runBuild(ctx, runtime, *build, projectDir); err != nil {
 		return fmt.Errorf("build %q failed: %w", build.Name, err)
 	}
 
 	return nil
 }
 
-func runBuild(runtime container.ContainerRuntime, build config.StageConfig, projectDir string) error {
-	ctx := context.Background()
-
+func runBuild(ctx context.Context, runtime container.ContainerRuntime, build config.StageConfig, projectDir string) error {
 	if err := runtime.PullImage(ctx, build.Image); err != nil {
 		return fmt.Errorf("failed to pull image %s: %w", build.Image, err)
 	}
@@ -61,7 +59,7 @@ func runBuild(runtime container.ContainerRuntime, build config.StageConfig, proj
 	if err != nil {
 		return fmt.Errorf("failed to create container: %w", err)
 	}
-	defer runtime.RemoveContainer(ctx, containerID)
+	defer cleanupContainer(ctx, runtime, containerID)
 
 	log.Printf("Starting container %s", shortContainerID(containerID))
 	if err := runtime.StartContainer(ctx, containerID); err != nil {
@@ -134,4 +132,11 @@ func runBuild(runtime container.ContainerRuntime, build config.StageConfig, proj
 	}
 
 	return nil
+}
+
+func cleanupContainer(ctx context.Context, runtime container.ContainerRuntime, containerID string) {
+	cleanupCtx := context.WithoutCancel(ctx)
+	if err := runtime.RemoveContainer(cleanupCtx, containerID); err != nil {
+		log.Printf("Failed to remove container %s: %v", shortContainerID(containerID), err)
+	}
 }
