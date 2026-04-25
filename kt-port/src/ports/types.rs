@@ -101,11 +101,7 @@ fn normalize_addr(addr: &str) -> String {
 fn lookup_process_name(system: &System, pid: u32) -> Option<String> {
     let process = system.process(Pid::from_u32(pid))?;
     let name = process.name().to_string_lossy().trim().to_string();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }
 
 pub trait PortScanner: Send + Sync {

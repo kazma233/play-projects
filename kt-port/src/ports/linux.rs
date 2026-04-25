@@ -26,7 +26,12 @@ fn hex_to_ip(hex: &str) -> Option<String> {
     match hex.len() {
         8 => {
             let bytes = decode_hex_bytes(hex)?;
-            let octets = [*bytes.get(3)?, *bytes.get(2)?, *bytes.get(1)?, *bytes.get(0)?];
+            let octets = [
+                *bytes.get(3)?,
+                *bytes.get(2)?,
+                *bytes.get(1)?,
+                *bytes.get(0)?,
+            ];
             Some(Ipv4Addr::from(octets).to_string())
         }
         32 => {

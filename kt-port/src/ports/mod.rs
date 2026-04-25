@@ -1,11 +1,11 @@
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 mod types;
 mod utils;
 #[cfg(target_os = "windows")]
 mod windows;
-#[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "linux")]
-mod linux;
 
 pub use types::{Enhance, KillTarget, PortError, PortInfo, PortScanner};
 

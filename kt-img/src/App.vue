@@ -50,9 +50,8 @@ import ImageTools from "./components/ImageTools.vue";
   display: flex;
   flex-direction: column;
   gap: 16px;
-  width: min(100%, 1600px);
+  width: 100%;
   height: 100%;
-  margin: 0 auto;
   padding: 24px;
   overflow: hidden;
 }

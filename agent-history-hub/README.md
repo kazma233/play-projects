@@ -44,6 +44,16 @@ pnpm tauri build
 - 消息和事件列表滚动到底部会自动加载更多
 - OpenCode 读取会聚合 root session 与子会话
 
+## 应用图标
+
+图标使用声明：
+
+作者：[Enze Fu](https://www.artstation.com/fuenze)
+
+作品：[Aoi's Morning, Putting on Tights](https://www.artstation.com/artwork/dywQkA)
+
+作为爱好开发使用，如有不妥随时移除
+
 ## License
 
 MIT

@@ -8,7 +8,6 @@
             <strong>图片压缩转换</strong>
             <span class="tool-panel__meta">本地图片预览、压缩、转码与批量导出。</span>
           </div>
-          <div class="image-toolbar__badge">JPG / PNG / WebP</div>
         </div>
 
         <div class="tool-inline-actions image-toolbar-actions">
@@ -32,7 +31,7 @@
           <button
             class="ui-button ui-button--primary image-toolbar-button"
             type="button"
-            :disabled="!processedData || saving"
+            :disabled="!selectedImage || processing || saving || batchProcessing"
             @click="saveImage"
           >
             <span v-if="saving" class="button-spinner"></span>
@@ -49,6 +48,115 @@
           </button>
         </div>
       </div>
+
+      <div class="image-toolbar-config">
+        <div class="image-toolbar-config__layout">
+          <div class="image-toolbar-config__group image-toolbar-config__group--format">
+            <div class="config-grid config-grid--format">
+              <div class="config-row">
+                <span class="label">转换格式</span>
+                <div class="image-button-group">
+                  <button
+                    class="ui-button ui-button--chip image-group-button"
+                    :class="{ 'is-active': outputFormat === 'Jpg' }"
+                    type="button"
+                    @click="outputFormat = 'Jpg'"
+                  >
+                    JPG
+                  </button>
+                  <button
+                    class="ui-button ui-button--chip image-group-button"
+                    :class="{ 'is-active': outputFormat === 'Png' }"
+                    type="button"
+                    @click="outputFormat = 'Png'"
+                  >
+                    PNG
+                  </button>
+                  <button
+                    class="ui-button ui-button--chip image-group-button"
+                    :class="{ 'is-active': outputFormat === 'WebP' }"
+                    type="button"
+                    @click="outputFormat = 'WebP'"
+                  >
+                    WebP
+                  </button>
+                </div>
+                <div v-if="outputFormat === 'WebP'" class="image-button-group image-button-group--mode">
+                  <button
+                    class="ui-button ui-button--chip image-group-button image-group-button--mode"
+                    :class="{ 'is-active': !webpLossless }"
+                    type="button"
+                    @click="webpLossless = false"
+                  >
+                    有损
+                  </button>
+                  <button
+                    class="ui-button ui-button--chip image-group-button image-group-button--mode"
+                    :class="{ 'is-active': webpLossless }"
+                    type="button"
+                    @click="webpLossless = true"
+                  >
+                    无损
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <p class="image-format-hint">{{ formatHint }}</p>
+          </div>
+
+          <div class="image-toolbar-config__group image-toolbar-config__group--adjustments">
+            <div class="config-grid config-grid--adjustments">
+              <div class="config-row config-row--quality image-control image-control--slider">
+                <label class="label label--stack" for="quality-slider">
+                  <span>{{ qualityLabel }} {{ quality }}%</span>
+                </label>
+                <input
+                  id="quality-slider"
+                  v-model.number="quality"
+                  class="image-control__slider"
+                  type="range"
+                  min="1"
+                  max="100"
+                  step="1"
+                  :disabled="qualityControlsDisabled"
+                />
+                <div class="image-button-group image-button-group--presets">
+                  <button
+                    v-for="preset in qualityPresets"
+                    :key="preset.label"
+                    class="ui-button ui-button--chip image-group-button"
+                    :class="{ 'is-active': quality === preset.value }"
+                    type="button"
+                    :disabled="qualityControlsDisabled"
+                    @click="applyQualityPreset(preset.value)"
+                  >
+                    {{ preset.label }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="config-row config-row--stack image-control image-control--slider">
+                <label class="label label--stack" for="scale-slider">
+                  <span>缩放 {{ scale }}%</span>
+                  <span class="label__meta">{{ getScaledSize(scale) }}</span>
+                </label>
+                <input
+                  id="scale-slider"
+                  v-model.number="scale"
+                  class="image-control__slider"
+                  type="range"
+                  min="1"
+                  max="100"
+                  step="1"
+                  :title="getScaledSize(scale)"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
     </section>
 
     <div class="main-layout">
@@ -56,23 +164,32 @@
         <div v-if="images.length > 0" class="image-sidebar-scroll">
           <div class="image-list">
             <button
-              v-for="(img, idx) in images"
+              v-for="(imageEntry, idx) in images"
               :key="idx"
               class="image-list-item"
               :class="{
                 active: selectedIndex === idx,
-                'image-list-item--error': !!img.error
+                'image-list-item--error': !!imageEntry.error
               }"
               type="button"
-              :title="getImageListTitle(img)"
+              :title="getImageListTitle(imageEntry)"
               @click="selectImage(idx)"
             >
-              <span class="image-list-item__name">{{ img.name }}</span>
-              <span v-if="img.error" class="image-list-item__meta image-list-item__meta--error">
-                {{ img.error }}
+              <span class="image-list-item__name">{{ imageEntry.name }}</span>
+              <span
+                class="image-list-item__detail"
+                :class="{ 'image-list-item__detail--error': !!imageEntry.metadataError }"
+              >
+                {{ getImageListDetail(imageEntry) }}
               </span>
-              <span v-else-if="img.outputPath" class="image-list-item__meta">
-                已导出到 {{ getOutputFileName(img.outputPath) }}
+              <span
+                v-if="imageEntry.error"
+                class="image-list-item__meta image-list-item__meta--error"
+              >
+                {{ imageEntry.error }}
+              </span>
+              <span v-else-if="imageEntry.outputPath" class="image-list-item__meta">
+                已导出到 {{ getOutputFileName(imageEntry.outputPath) }}
               </span>
             </button>
           </div>
@@ -84,112 +201,6 @@
       </aside>
 
       <div class="main-content">
-        <section class="config-panel tool-surface image-card image-card--config">
-          <div class="config-grid">
-            <div class="config-row">
-              <span class="label">格式</span>
-              <div class="image-button-group">
-                <button
-                  class="ui-button ui-button--chip image-group-button"
-                  :class="{ 'is-active': outputFormat === 'Jpg' }"
-                  type="button"
-                  @click="outputFormat = 'Jpg'"
-                >
-                  JPG
-                </button>
-                <button
-                  class="ui-button ui-button--chip image-group-button"
-                  :class="{ 'is-active': outputFormat === 'Png' }"
-                  type="button"
-                  @click="outputFormat = 'Png'"
-                >
-                  PNG
-                </button>
-                <button
-                  class="ui-button ui-button--chip image-group-button"
-                  :class="{ 'is-active': outputFormat === 'WebP' }"
-                  type="button"
-                  @click="outputFormat = 'WebP'"
-                >
-                  WebP
-                </button>
-              </div>
-            </div>
-
-            <div v-if="outputFormat === 'WebP'" class="config-row">
-              <span class="label">模式</span>
-              <div class="image-button-group">
-                <button
-                  class="ui-button ui-button--chip image-group-button"
-                  :class="{ 'is-active': !webpLossless }"
-                  type="button"
-                  @click="webpLossless = false"
-                >
-                  有损
-                </button>
-                <button
-                  class="ui-button ui-button--chip image-group-button"
-                  :class="{ 'is-active': webpLossless }"
-                  type="button"
-                  @click="webpLossless = true"
-                >
-                  无损
-                </button>
-              </div>
-            </div>
-
-            <div v-if="showQualitySlider" class="config-row image-control image-control--slider">
-              <label class="label label--stack" for="quality-slider">
-                <span>{{ qualityLabel }} {{ quality }}%</span>
-              </label>
-              <input
-                id="quality-slider"
-                v-model.number="quality"
-                class="image-control__slider"
-                type="range"
-                min="1"
-                max="100"
-                step="1"
-              />
-            </div>
-
-            <div v-if="showQualitySlider" class="config-row">
-              <span class="label">预设</span>
-              <div class="image-button-group">
-                <button
-                  v-for="preset in qualityPresets"
-                  :key="preset.label"
-                  class="ui-button ui-button--chip image-group-button"
-                  :class="{ 'is-active': quality === preset.value }"
-                  type="button"
-                  @click="applyQualityPreset(preset.value)"
-                >
-                  {{ preset.label }}
-                </button>
-              </div>
-            </div>
-
-            <div class="config-row image-control image-control--slider">
-              <label class="label label--stack" for="scale-slider">
-                <span>缩放 {{ scale }}%</span>
-                <span class="label__meta">{{ getScaledSize(scale) }}</span>
-              </label>
-              <input
-                id="scale-slider"
-                v-model.number="scale"
-                class="image-control__slider"
-                type="range"
-                min="1"
-                max="100"
-                step="1"
-                :title="getScaledSize(scale)"
-              />
-            </div>
-          </div>
-
-          <p class="image-format-hint">{{ formatHint }}</p>
-        </section>
-
         <section v-if="selectedImage" class="preview-area tool-surface image-card">
           <div class="image-preview-head">
             <strong class="image-preview-title">{{ selectedImage.name }}</strong>
@@ -209,7 +220,7 @@
                 <span class="panel-title">原图</span>
                 <div class="panel-header-meta">
                   <span class="image-preview-load-time">{{ originalPreviewLoadText }}</span>
-                  <span class="panel-subtitle">{{ selectedImage.width }} x {{ selectedImage.height }}</span>
+                  <span class="panel-subtitle">{{ originalPreviewInfo || '--' }}</span>
                 </div>
               </div>
 
@@ -248,7 +259,9 @@
                 <span class="panel-title">处理后</span>
                 <div class="panel-header-meta">
                   <span class="image-preview-load-time">{{ processedPreviewLoadText }}</span>
-                  <span class="panel-subtitle image-compression-meta">{{ compressionInfo || '--' }}</span>
+                  <span class="panel-subtitle image-compression-meta">
+                    {{ compressionInfo || '--' }}
+                  </span>
                 </div>
               </div>
 
@@ -294,18 +307,30 @@
       </div>
     </TransitionGroup>
 
-    <div v-if="confirmState.open" class="modal-backdrop" @click.self="closeConfirm(false)">
+    <div
+      v-if="confirmDialogState.open"
+      class="modal-backdrop"
+      @click.self="closeConfirmDialog(false)"
+    >
       <div class="modal-card">
         <div class="modal-card__header">
-          <strong>{{ confirmState.title }}</strong>
-          <p>{{ confirmState.content }}</p>
+          <strong>{{ confirmDialogState.title }}</strong>
+          <p>{{ confirmDialogState.content }}</p>
         </div>
         <div class="modal-card__actions">
-          <button class="ui-button ui-button--ghost" type="button" @click="closeConfirm(false)">
-            {{ confirmState.negativeText }}
+          <button
+            class="ui-button ui-button--ghost"
+            type="button"
+            @click="closeConfirmDialog(false)"
+          >
+            {{ confirmDialogState.negativeText }}
           </button>
-          <button class="ui-button ui-button--danger" type="button" @click="closeConfirm(true)">
-            {{ confirmState.positiveText }}
+          <button
+            class="ui-button ui-button--danger"
+            type="button"
+            @click="closeConfirmDialog(true)"
+          >
+            {{ confirmDialogState.positiveText }}
           </button>
         </div>
       </div>
@@ -317,18 +342,29 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { writeFile } from '@tauri-apps/plugin-fs'
 
-const images = ref([])
-const selectedIndex = ref(null)
-const outputFormat = ref('Jpg')
-const qualityByFormat = reactive({
+const DEFAULT_QUALITY_BY_FORMAT = Object.freeze({
   Jpg: 80,
   Png: 65,
   WebP: 80
 })
-const scale = ref(100)
-const webpLossless = ref(false)
+const DEFAULT_EXPORT_SETTINGS = Object.freeze({
+  outputFormat: 'Jpg',
+  qualityByFormat: DEFAULT_QUALITY_BY_FORMAT,
+  scale: 100,
+  webpLossless: false
+})
+const EXPORT_SETTINGS_STORAGE_KEY = 'kt-img:last-export-settings'
+const EXPORT_FORMATS = ['Jpg', 'Png', 'WebP']
+
+const images = ref([])
+const selectedIndex = ref(null)
+const outputFormat = ref(DEFAULT_EXPORT_SETTINGS.outputFormat)
+const qualityByFormat = reactive({
+  ...DEFAULT_QUALITY_BY_FORMAT
+})
+const scale = ref(DEFAULT_EXPORT_SETTINGS.scale)
+const webpLossless = ref(DEFAULT_EXPORT_SETTINGS.webpLossless)
 const processing = ref(false)
 const saving = ref(false)
 const batchProcessing = ref(false)
@@ -336,15 +372,15 @@ const batchCompleted = ref(0)
 const batchTotal = ref(0)
 const previewLoading = ref(false)
 const originalImageUrl = ref('')
-const processedData = ref(null)
-const processedDimensions = ref(null)
+const originalPreviewLoadMs = ref(null)
 const processedImageUrl = ref('')
+const processedPreviewMeta = ref(null)
 const processedPreviewLoadMs = ref(null)
 const processedPreviewLoading = ref(false)
 const viewportWidth = ref(0)
 const splitContainer = ref(null)
 const toasts = ref([])
-const confirmState = reactive({
+const confirmDialogState = reactive({
   open: false,
   title: '',
   content: '',
@@ -356,11 +392,17 @@ const confirmState = reactive({
 let previewRequestId = 0
 let processRequestId = 0
 let autoProcessTimer = null
+let persistSettingsTimer = null
 let originalPreviewLoadStartedAt = 0
 let processedPreviewLoadStartedAt = 0
 let nextToastId = 0
+let componentUnmounted = false
 const toastTimers = new Map()
+const metadataQueue = []
+let metadataWorkers = 0
 const AUTO_PROCESS_DELAY = 180
+const PERSIST_SETTINGS_DELAY = 180
+const METADATA_CONCURRENCY = 6
 const splitDragging = ref(false)
 const splitRatio = ref(0.5)
 let removeSplitListeners = null
@@ -396,35 +438,140 @@ const clearToasts = () => {
   toasts.value = []
 }
 
-const message = {
-  success(text) {
-    pushToast('success', text)
+const showSuccessToast = (text) => {
+  pushToast('success', text)
+}
+
+const showErrorToast = (text) => {
+  pushToast('error', text)
+}
+
+const clampInteger = (value, min, max, fallback) => {
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) return fallback
+
+  return Math.min(max, Math.max(min, Math.round(numericValue)))
+}
+
+const normalizeOutputFormat = (value) => {
+  return EXPORT_FORMATS.includes(value)
+    ? value
+    : DEFAULT_EXPORT_SETTINGS.outputFormat
+}
+
+const normalizeExportSettings = (settings) => {
+  const source = settings && typeof settings === 'object' ? settings : {}
+  const qualitySource = source.qualityByFormat && typeof source.qualityByFormat === 'object'
+    ? source.qualityByFormat
+    : {}
+
+  return {
+    outputFormat: normalizeOutputFormat(source.outputFormat),
+    qualityByFormat: {
+      Jpg: clampInteger(qualitySource.Jpg, 1, 100, DEFAULT_QUALITY_BY_FORMAT.Jpg),
+      Png: clampInteger(qualitySource.Png, 1, 100, DEFAULT_QUALITY_BY_FORMAT.Png),
+      WebP: clampInteger(qualitySource.WebP, 1, 100, DEFAULT_QUALITY_BY_FORMAT.WebP)
+    },
+    scale: clampInteger(source.scale, 1, 100, DEFAULT_EXPORT_SETTINGS.scale),
+    webpLossless: source.webpLossless === true
+  }
+}
+
+const createExportSettingsSnapshot = () => normalizeExportSettings({
+  outputFormat: outputFormat.value,
+  qualityByFormat: {
+    Jpg: qualityByFormat.Jpg,
+    Png: qualityByFormat.Png,
+    WebP: qualityByFormat.WebP
   },
-  error(text) {
-    pushToast('error', text)
+  scale: scale.value,
+  webpLossless: webpLossless.value
+})
+
+const applyExportSettings = (settings) => {
+  const normalized = normalizeExportSettings(settings)
+
+  qualityByFormat.Jpg = normalized.qualityByFormat.Jpg
+  qualityByFormat.Png = normalized.qualityByFormat.Png
+  qualityByFormat.WebP = normalized.qualityByFormat.WebP
+  outputFormat.value = normalized.outputFormat
+  scale.value = normalized.scale
+  webpLossless.value = normalized.webpLossless
+}
+
+const restoreLastExportSettings = () => {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const rawValue = window.localStorage.getItem(EXPORT_SETTINGS_STORAGE_KEY)
+    if (!rawValue) return null
+
+    return normalizeExportSettings(JSON.parse(rawValue))
+  } catch {
+    window.localStorage.removeItem(EXPORT_SETTINGS_STORAGE_KEY)
+    return null
   }
 }
 
-const dialog = {
-  warning({ title, content, positiveText = '确定', negativeText = '取消', onPositiveClick }) {
-    confirmState.open = true
-    confirmState.title = title
-    confirmState.content = content
-    confirmState.positiveText = positiveText
-    confirmState.negativeText = negativeText
-    confirmState.onPositiveClick = onPositiveClick || null
+const persistLastExportSettings = (settings) => {
+  if (typeof window === 'undefined') return
+
+  try {
+    window.localStorage.setItem(
+      EXPORT_SETTINGS_STORAGE_KEY,
+      JSON.stringify(normalizeExportSettings(settings))
+    )
+  } catch {
+    // localStorage 不可用时跳过，不影响主流程
   }
 }
 
-const closeConfirm = (confirmed) => {
-  const onPositiveClick = confirmed ? confirmState.onPositiveClick : null
+const clearPersistSettingsTimer = () => {
+  if (!persistSettingsTimer) return
 
-  confirmState.open = false
-  confirmState.title = ''
-  confirmState.content = ''
-  confirmState.positiveText = '确定'
-  confirmState.negativeText = '取消'
-  confirmState.onPositiveClick = null
+  clearTimeout(persistSettingsTimer)
+  persistSettingsTimer = null
+}
+
+const flushPersistExportSettings = () => {
+  clearPersistSettingsTimer()
+  persistLastExportSettings(createExportSettingsSnapshot())
+}
+
+const queuePersistExportSettings = () => {
+  clearPersistSettingsTimer()
+  const settingsSnapshot = createExportSettingsSnapshot()
+
+  persistSettingsTimer = window.setTimeout(() => {
+    persistSettingsTimer = null
+    persistLastExportSettings(settingsSnapshot)
+  }, PERSIST_SETTINGS_DELAY)
+}
+
+const openWarningDialog = ({
+  title,
+  content,
+  positiveText = '确定',
+  negativeText = '取消',
+  onPositiveClick
+}) => {
+  confirmDialogState.open = true
+  confirmDialogState.title = title
+  confirmDialogState.content = content
+  confirmDialogState.positiveText = positiveText
+  confirmDialogState.negativeText = negativeText
+  confirmDialogState.onPositiveClick = onPositiveClick || null
+}
+
+const closeConfirmDialog = (confirmed) => {
+  const onPositiveClick = confirmed ? confirmDialogState.onPositiveClick : null
+
+  confirmDialogState.open = false
+  confirmDialogState.title = ''
+  confirmDialogState.content = ''
+  confirmDialogState.positiveText = '确定'
+  confirmDialogState.negativeText = '取消'
+  confirmDialogState.onPositiveClick = null
 
   if (onPositiveClick) {
     onPositiveClick()
@@ -450,6 +597,29 @@ const normalizeErrorMessage = (error) => {
   if (error instanceof Error) return error.message
 
   return String(error)
+}
+
+const formatFileSize = (bytes) => {
+  if (!Number.isFinite(bytes) || bytes < 0) return '--'
+  if (bytes < 1024) return `${bytes} B`
+
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unitIndex = 0
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+
+  let digits = 2
+  if (value >= 100) {
+    digits = 0
+  } else if (value >= 10) {
+    digits = 1
+  }
+
+  return `${value.toFixed(digits)} ${units[unitIndex]}`
 }
 
 const stackedPreview = computed(() => viewportWidth.value <= 1180)
@@ -532,17 +702,52 @@ const selectedImage = computed(() => {
 const originalPreviewLoadText = computed(() => {
   if (previewLoading.value) return '原图加载中...'
 
-  const loadMs = selectedImage.value?.previewLoadMs
+  const loadMs = originalPreviewLoadMs.value
   if (typeof loadMs !== 'number') return '原图加载耗时: --'
 
   return `原图加载耗时: ${loadMs.toFixed(2)} ms`
 })
 
+const originalPreviewInfo = computed(() => {
+  if (!selectedImage.value) return ''
+
+  const hasMetadata = selectedImage.value.metadataLoaded
+  const sizeText = hasMetadata ? formatFileSize(selectedImage.value.size) : '--'
+  const resolutionText = hasMetadata
+    ? `${selectedImage.value.width} x ${selectedImage.value.height}`
+    : '--'
+
+  return `${sizeText} | ${resolutionText}`
+})
+
+const compressionRatioText = computed(() => {
+  if (!processedPreviewMeta.value) {
+    return '--'
+  }
+
+  const originalSize = processedPreviewMeta.value.originalSize || selectedImage.value?.size
+  if (!Number.isFinite(originalSize) || originalSize <= 0) {
+    return '--'
+  }
+
+  const ratio = Math.round((1 - processedPreviewMeta.value.processedSize / originalSize) * 100)
+
+  if (ratio > 0) {
+    return `↓${ratio}%`
+  }
+
+  if (ratio < 0) {
+    return `↑${Math.abs(ratio)}%`
+  }
+
+  return '0%'
+})
+
 const finishOriginalPreviewLoad = ({ failed = false } = {}) => {
   if (!previewLoading.value) return
 
-  if (!failed && selectedImage.value && originalPreviewLoadStartedAt > 0) {
-    selectedImage.value.previewLoadMs = performance.now() - originalPreviewLoadStartedAt
+  if (!failed && originalPreviewLoadStartedAt > 0) {
+    originalPreviewLoadMs.value = performance.now() - originalPreviewLoadStartedAt
   }
 
   previewLoading.value = false
@@ -555,15 +760,15 @@ const handleOriginalPreviewLoad = () => {
 
 const handleOriginalPreviewError = () => {
   finishOriginalPreviewLoad({ failed: true })
-  message.error('原图预览渲染失败')
+  showErrorToast('原图预览渲染失败')
 }
 
 const processedPreviewLoadText = computed(() => {
-  if (processing.value || processedPreviewLoading.value) return '处理预览生成中...'
+  if (processing.value || processedPreviewLoading.value) return '处理结果生成中...'
 
-  if (typeof processedPreviewLoadMs.value !== 'number') return '处理预览耗时: --'
+  if (typeof processedPreviewLoadMs.value !== 'number') return '处理结果耗时: --'
 
-  return `处理预览耗时: ${processedPreviewLoadMs.value.toFixed(2)} ms`
+  return `处理结果耗时: ${processedPreviewLoadMs.value.toFixed(2)} ms`
 })
 
 const finishProcessedPreviewLoad = ({ failed = false } = {}) => {
@@ -583,20 +788,20 @@ const handleProcessedPreviewLoad = () => {
 
 const handleProcessedPreviewError = () => {
   finishProcessedPreviewLoad({ failed: true })
-  message.error('处理后预览渲染失败')
+  showErrorToast('处理后预览渲染失败')
 }
 
 const compressionInfo = computed(() => {
-  if (!processedData.value) return ''
-  const dims = processedDimensions.value ? `${processedDimensions.value.width} x ${processedDimensions.value.height} | ` : ''
-  const originalKb = selectedImage.value.size / 1024
-  const processedKb = processedData.value.length / 1024
-  if (originalKb === 0) return dims + Math.round(processedKb) + ' KB'
-  const ratio = Math.round((originalKb - processedKb) / originalKb * 100)
-  return dims + Math.round(originalKb) + ' KB → ' + Math.round(processedKb) + ' KB (↓' + ratio + '%)'
+  if (!processedPreviewMeta.value) return ''
+
+  const meta = processedPreviewMeta.value
+  const sizeText = formatFileSize(meta.processedSize)
+  const resolutionText = `${meta.outputWidth} x ${meta.outputHeight}`
+
+  return `${sizeText} | ${resolutionText} | ${compressionRatioText.value}`
 })
 
-const showQualitySlider = computed(() => outputFormat.value !== 'WebP' || !webpLossless.value)
+const qualityControlsDisabled = computed(() => outputFormat.value === 'WebP' && webpLossless.value)
 
 const qualityPresets = computed(() => {
   if (outputFormat.value === 'Png') {
@@ -638,34 +843,51 @@ const revokeObjectUrl = (url) => {
 
 const getOutputFileName = (outputPath) => outputPath.split(/[/\\]/).pop() || outputPath
 
-const getImageListTitle = (img) => {
-  if (img.error) {
-    return `${img.name}\n错误: ${img.error}`
+const getImageListTitle = (imageEntry) => {
+  const metadata = getImageListDetail(imageEntry)
+  if (imageEntry.error) {
+    return `${imageEntry.name}\n${metadata}\n错误: ${imageEntry.error}`
   }
 
-  if (img.outputPath) {
-    return `${img.name}\n输出: ${img.outputPath}`
+  if (imageEntry.outputPath) {
+    return `${imageEntry.name}\n${metadata}\n输出: ${imageEntry.outputPath}`
   }
 
-  return img.name
+  return `${imageEntry.name}\n${metadata}`
+}
+
+const getImageListDetail = (imageEntry) => {
+  if (imageEntry.metadataLoaded) {
+    return `${imageEntry.width} x ${imageEntry.height} · ${formatFileSize(imageEntry.size)}`
+  }
+
+  if (imageEntry.metadataError) {
+    return imageEntry.metadataError
+  }
+
+  if (imageEntry.metadataLoading || imageEntry.metadataQueued) {
+    return '读取大小和分辨率中...'
+  }
+
+  return '等待元数据'
 }
 
 const applyQualityPreset = (value) => {
   quality.value = value
 }
 
-const revokeImagePreview = (img) => {
-  if (!img?.previewUrl) return
-  revokeObjectUrl(img.previewUrl)
-  img.previewUrl = ''
-  img.previewLoaded = false
-  img.previewLoadMs = null
-}
-
 const clearAutoProcessTimer = () => {
   if (!autoProcessTimer) return
   clearTimeout(autoProcessTimer)
   autoProcessTimer = null
+}
+
+const resetOriginalPreviewState = () => {
+  previewLoading.value = false
+  originalPreviewLoadStartedAt = 0
+  originalPreviewLoadMs.value = null
+  revokeObjectUrl(originalImageUrl.value)
+  originalImageUrl.value = ''
 }
 
 const invalidateProcessedPreview = () => {
@@ -677,8 +899,7 @@ const invalidateProcessedPreview = () => {
 }
 
 const resetProcessedState = () => {
-  processedData.value = null
-  processedDimensions.value = null
+  processedPreviewMeta.value = null
   revokeObjectUrl(processedImageUrl.value)
   processedImageUrl.value = ''
   processedPreviewLoadMs.value = null
@@ -687,39 +908,116 @@ const resetProcessedState = () => {
 const createImageEntry = (file) => {
   const fileName = file.split(/[/\\]/).pop() || file
 
-  return {
+  return reactive({
     path: file,
     name: fileName,
     size: 0,
     width: 0,
     height: 0,
-    processed: false,
     error: null,
     outputPath: '',
-    previewLoaded: false,
-    previewUrl: '',
-    previewLoadMs: null
+    metadataLoaded: false,
+    metadataLoading: false,
+    metadataQueued: false,
+    metadataError: ''
+  })
+}
+
+const syncImageMetadata = (imageEntry, metadata) => {
+  if (!imageEntry || !metadata) return
+
+  imageEntry.size = metadata.original_size
+  imageEntry.width = metadata.width
+  imageEntry.height = metadata.height
+  imageEntry.metadataLoaded = true
+  imageEntry.metadataError = ''
+}
+
+const startMetadataWorkers = () => {
+  while (
+    !componentUnmounted &&
+    metadataWorkers < METADATA_CONCURRENCY &&
+    metadataQueue.length > 0
+  ) {
+    void runMetadataWorker()
   }
 }
 
-const batchConcurrency = (count = images.value.length) => Math.max(1, Math.min(count, globalThis.navigator?.hardwareConcurrency || 4, 6))
+const runMetadataWorker = async () => {
+  metadataWorkers++
 
-const clearCachedImages = () => {
-  for (const img of images.value) {
-    revokeImagePreview(img)
+  try {
+    while (!componentUnmounted && metadataQueue.length > 0) {
+      const imageEntry = metadataQueue.shift()
+      if (!imageEntry || !imageEntry.path || imageEntry.metadataLoaded || imageEntry.metadataLoading) {
+        continue
+      }
+
+      imageEntry.metadataQueued = false
+      imageEntry.metadataLoading = true
+
+      try {
+        const metadata = await invoke('load_image_metadata', { path: imageEntry.path })
+        if (componentUnmounted) {
+          return
+        }
+
+        syncImageMetadata(imageEntry, metadata)
+      } catch (e) {
+        if (componentUnmounted) {
+          return
+        }
+
+        imageEntry.metadataError = '元数据读取失败'
+      } finally {
+        imageEntry.metadataLoading = false
+      }
+    }
+  } finally {
+    metadataWorkers--
+    if (!componentUnmounted) {
+      startMetadataWorkers()
+    }
   }
+}
+
+const enqueueMetadataLoad = (entries) => {
+  for (const imageEntry of entries) {
+    if (!imageEntry?.path || imageEntry.metadataLoaded || imageEntry.metadataLoading || imageEntry.metadataQueued) {
+      continue
+    }
+
+    imageEntry.metadataQueued = true
+    imageEntry.metadataError = ''
+    metadataQueue.push(imageEntry)
+  }
+
+  startMetadataWorkers()
+}
+
+const batchConcurrency = (count = images.value.length) => {
+  const availableWorkers = globalThis.navigator?.hardwareConcurrency || 4
+  return Math.max(1, Math.min(count, availableWorkers, 6))
 }
 
 onBeforeUnmount(() => {
+  metadataQueue.length = 0
+  componentUnmounted = true
   window.removeEventListener('resize', syncViewport)
   invalidateProcessedPreview()
-  clearCachedImages()
+  resetOriginalPreviewState()
   resetProcessedState()
+  flushPersistExportSettings()
   clearToasts()
   stopSplitDrag()
 })
 
 onMounted(() => {
+  componentUnmounted = false
+  const restoredSettings = restoreLastExportSettings()
+  if (restoredSettings) {
+    applyExportSettings(restoredSettings)
+  }
   syncViewport()
   window.addEventListener('resize', syncViewport)
 })
@@ -728,16 +1026,17 @@ const addImages = async () => {
   try {
     const files = await open({
       multiple: true,
-      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'] }]
     })
 
     if (files && files.length > 0) {
-      for (const file of files) {
-        images.value.push(createImageEntry(file))
-      }
+      const newEntries = files.map((file) => createImageEntry(file))
+
+      images.value.push(...newEntries)
+      enqueueMetadataLoad(newEntries)
     }
   } catch (e) {
-    message.error('选择文件失败: ' + normalizeErrorMessage(e))
+    showErrorToast('选择文件失败: ' + normalizeErrorMessage(e))
   }
 }
 
@@ -746,59 +1045,40 @@ const selectImage = async (idx) => {
   selectedIndex.value = idx
   const currentRequestId = ++previewRequestId
   resetProcessedState()
-  originalImageUrl.value = ''
+  resetOriginalPreviewState()
 
-  const img = images.value[idx]
-  if (!img || !img.path) return
-  queueProcessedPreviewRefresh()
-
-  if (img.previewLoaded && img.previewUrl) {
-    if (typeof img.previewLoadMs === 'number') {
-      previewLoading.value = false
-      originalPreviewLoadStartedAt = 0
-    } else {
-      previewLoading.value = true
-      originalPreviewLoadStartedAt = performance.now()
-    }
-    originalImageUrl.value = img.previewUrl
-    return
+  const imageEntry = images.value[idx]
+  if (!imageEntry || !imageEntry.path) return
+  if (!imageEntry.metadataLoaded && !imageEntry.metadataLoading) {
+    enqueueMetadataLoad([imageEntry])
   }
+  queueProcessedPreviewRefresh()
 
   previewLoading.value = true
   originalPreviewLoadStartedAt = performance.now()
-  img.previewLoadMs = null
 
   try {
-    const result = await invoke('load_original_image', {
-      path: img.path
+    const result = await invoke('load_original_preview', {
+      path: imageEntry.path
     })
 
-    images.value[idx].width = result.width
-    images.value[idx].height = result.height
-    images.value[idx].size = result.original_size
-
-    const ext = img.name.split('.').pop()?.toLowerCase()
-    const mimeType = ext === 'png'
-      ? 'image/png'
-      : ext === 'webp'
-        ? 'image/webp'
-        : ext === 'bmp'
-          ? 'image/bmp'
-          : 'image/jpeg'
-
-    revokeImagePreview(images.value[idx])
-    const blob = new Blob([new Uint8Array(result.image_data)], { type: mimeType })
-    images.value[idx].previewUrl = URL.createObjectURL(blob)
-    images.value[idx].previewLoaded = true
-
-    if (currentRequestId === previewRequestId && selectedIndex.value === idx) {
-      originalImageUrl.value = images.value[idx].previewUrl
+    if (componentUnmounted || currentRequestId !== previewRequestId || selectedIndex.value !== idx) {
+      return
     }
+
+    syncImageMetadata(imageEntry, {
+      original_size: result.original_size,
+      width: result.width,
+      height: result.height
+    })
+
+    const blob = new Blob([new Uint8Array(result.image_data)], { type: result.mime_type })
+    originalImageUrl.value = URL.createObjectURL(blob)
   } catch (e) {
-    if (currentRequestId === previewRequestId && selectedIndex.value === idx) {
+    if (!componentUnmounted && currentRequestId === previewRequestId && selectedIndex.value === idx) {
       previewLoading.value = false
       originalPreviewLoadStartedAt = 0
-      message.error('加载预览失败: ' + normalizeErrorMessage(e))
+      showErrorToast('加载预览失败: ' + normalizeErrorMessage(e))
     }
   }
 }
@@ -820,7 +1100,7 @@ const processImage = async ({ notifySuccess = true } = {}) => {
   processedPreviewLoadStartedAt = performance.now()
 
   try {
-    const result = await invoke('process_image', {
+    const result = await invoke('process_image_preview', {
       path: targetImage.path,
       format: targetFormat,
       quality: targetQuality,
@@ -832,22 +1112,20 @@ const processImage = async ({ notifySuccess = true } = {}) => {
       return
     }
 
-    processedData.value = new Uint8Array(result.data)
-    processedDimensions.value = { width: result.width, height: result.height }
+    processedPreviewMeta.value = {
+      originalSize: result.original_size,
+      outputWidth: result.output_width,
+      outputHeight: result.output_height,
+      processedSize: result.processed_size
+    }
 
-    const mimeType = targetFormat === 'Jpg'
-      ? 'image/jpeg'
-      : targetFormat === 'WebP'
-        ? 'image/webp'
-        : 'image/png'
-    const blob = new Blob([processedData.value], { type: mimeType })
+    const blob = new Blob([new Uint8Array(result.data)], { type: result.mime_type })
     processedImageUrl.value = URL.createObjectURL(blob)
 
-    images.value[selectedIndex.value].processed = true
     images.value[selectedIndex.value].error = null
 
     if (notifySuccess) {
-      message.success('处理完成')
+      showSuccessToast('处理完成')
     }
   } catch (e) {
     if (currentRequestId !== processRequestId || selectedImage.value?.path !== targetImage.path) {
@@ -855,7 +1133,7 @@ const processImage = async ({ notifySuccess = true } = {}) => {
     }
     processedPreviewLoading.value = false
     processedPreviewLoadStartedAt = 0
-    message.error('处理失败: ' + normalizeErrorMessage(e))
+    showErrorToast('处理失败: ' + normalizeErrorMessage(e))
   } finally {
     if (currentRequestId === processRequestId && selectedImage.value?.path === targetImage.path) {
       processing.value = false
@@ -879,7 +1157,7 @@ const queueProcessedPreviewRefresh = () => {
 }
 
 const saveImage = async () => {
-  if (!processedData.value || !selectedImage.value) return
+  if (!selectedImage.value) return
 
   saving.value = true
   try {
@@ -892,11 +1170,21 @@ const saveImage = async () => {
     })
 
     if (filePath) {
-      await writeFile(filePath, processedData.value)
-      message.success('保存成功')
+      const result = await invoke('process_and_write_image', {
+        inputPath: selectedImage.value.path,
+        outputPath: filePath,
+        format: outputFormat.value,
+        quality: quality.value,
+        scale: scale.value,
+        webpLossless: webpLossless.value
+      })
+
+      selectedImage.value.outputPath = result.output_path
+      selectedImage.value.error = null
+      showSuccessToast('保存成功')
     }
   } catch (e) {
-    message.error('保存失败: ' + normalizeErrorMessage(e))
+    showErrorToast('保存失败: ' + normalizeErrorMessage(e))
   } finally {
     saving.value = false
   }
@@ -928,10 +1216,9 @@ const batchProcess = async () => {
     let nextIndex = 0
     const failures = []
 
-    for (const img of batchImages) {
-      img.processed = false
-      img.error = null
-      img.outputPath = ''
+    for (const imageEntry of batchImages) {
+      imageEntry.error = null
+      imageEntry.outputPath = ''
     }
 
     const worker = async () => {
@@ -941,11 +1228,11 @@ const batchProcess = async () => {
           return
         }
 
-        const img = batchImages[currentIndex]
+        const imageEntry = batchImages[currentIndex]
 
         try {
           const result = await invoke('process_and_save_image', {
-            inputPath: img.path,
+            inputPath: imageEntry.path,
             outputDir,
             format: batchSettings.format,
             quality: batchSettings.quality,
@@ -953,16 +1240,14 @@ const batchProcess = async () => {
             webpLossless: batchSettings.webpLossless
           })
 
-          img.processed = true
-          img.error = null
-          img.outputPath = result.output_path
+          imageEntry.error = null
+          imageEntry.outputPath = result.output_path
         } catch (e) {
           const errorMessage = normalizeErrorMessage(e)
 
-          img.processed = false
-          img.error = errorMessage
-          img.outputPath = ''
-          failures.push({ name: img.name, error: errorMessage })
+          imageEntry.error = errorMessage
+          imageEntry.outputPath = ''
+          failures.push({ name: imageEntry.name, error: errorMessage })
         } finally {
           batchCompleted.value++
         }
@@ -972,31 +1257,30 @@ const batchProcess = async () => {
     await Promise.all(Array.from({ length: concurrency }, () => worker()))
 
     if (failures.length > 0) {
-      message.error(`批量处理完成，但有 ${failures.length} 个文件失败，请查看左侧列表。`)
+      showErrorToast(`批量处理完成，但有 ${failures.length} 个文件失败，请查看左侧列表。`)
     } else {
-      message.success('批量处理完成')
+      showSuccessToast('批量处理完成')
     }
   } catch (e) {
-    message.error('批量处理失败: ' + normalizeErrorMessage(e))
+    showErrorToast('批量处理失败: ' + normalizeErrorMessage(e))
   } finally {
     batchProcessing.value = false
   }
 }
 
 const clearAll = () => {
-  dialog.warning({
+  openWarningDialog({
     title: '确认清空',
     content: '确定要清空所有图片吗？',
     positiveText: '确定',
     negativeText: '取消',
     onPositiveClick: () => {
       invalidateProcessedPreview()
-      clearCachedImages()
+      metadataQueue.length = 0
       previewRequestId++
-      previewLoading.value = false
       images.value = []
       selectedIndex.value = null
-      originalImageUrl.value = ''
+      resetOriginalPreviewState()
       resetProcessedState()
     }
   })
@@ -1005,11 +1289,15 @@ const clearAll = () => {
 watch(
   [
     outputFormat,
-    quality,
     scale,
-    webpLossless
+    webpLossless,
+    () => qualityByFormat.Jpg,
+    () => qualityByFormat.Png,
+    () => qualityByFormat.WebP
   ],
   () => {
+    queuePersistExportSettings()
+
     if (selectedImage.value?.path) {
       queueProcessedPreviewRefresh()
     }
@@ -1029,10 +1317,6 @@ watch(
   padding: 18px;
 }
 
-.image-card--config {
-  padding: 16px 18px;
-}
-
 .image-card--inner {
   padding: 8px;
   border-radius: 20px;
@@ -1041,6 +1325,9 @@ watch(
 
 .image-toolbar-card {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .image-toolbar {
@@ -1075,20 +1362,6 @@ watch(
   font-size: clamp(1.1rem, 2vw, 1.25rem);
 }
 
-.image-toolbar__badge {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  padding: 10px 14px;
-  border: 1px solid rgba(249, 115, 22, 0.18);
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(255, 247, 237, 0.95), rgba(255, 255, 255, 0.92));
-  color: #c2410c;
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
 .image-toolbar-actions {
   align-items: center;
 }
@@ -1097,6 +1370,27 @@ watch(
   width: 1px;
   height: 2rem;
   background: rgba(148, 163, 184, 0.28);
+}
+
+.image-toolbar-config {
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.image-toolbar-config__layout {
+  display: grid;
+  grid-template-columns: minmax(18rem, 1.15fr) minmax(18rem, 1fr);
+  gap: 20px 24px;
+  align-items: start;
+}
+
+.image-toolbar-config__group {
+  min-width: 0;
+}
+
+.image-toolbar-config__group--adjustments {
+  display: flex;
+  flex-direction: column;
 }
 
 .ui-button {
@@ -1234,6 +1528,7 @@ watch(
 }
 
 .image-list-item__name,
+.image-list-item__detail,
 .image-list-item__meta {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1242,6 +1537,15 @@ watch(
 
 .image-list-item__name {
   width: 100%;
+}
+
+.image-list-item__detail {
+  color: #64748b;
+  font-size: 0.74rem;
+}
+
+.image-list-item__detail--error {
+  color: #b45309;
 }
 
 .image-list-item__meta {
@@ -1281,15 +1585,21 @@ watch(
   overflow: hidden;
 }
 
-.config-panel {
-  flex-shrink: 0;
-}
-
 .config-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 18px 24px;
   align-items: center;
+}
+
+.config-grid--format {
+  gap: 14px;
+}
+
+.config-grid--adjustments {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
 }
 
 .config-row {
@@ -1301,6 +1611,20 @@ watch(
   min-width: 0;
 }
 
+.config-row--stack {
+  align-items: stretch;
+  flex: 1 1 auto;
+}
+
+.config-row--quality {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.config-row--quality .label {
+  flex: 0 0 auto;
+}
+
 .image-control {
   flex: 1 1 min(100%, 12rem);
 }
@@ -1309,11 +1633,20 @@ watch(
   align-items: center;
 }
 
+.config-row--stack.image-control--slider {
+  gap: 8px;
+}
+
 .image-control__slider {
   flex: 1 1 min(100%, 7rem);
   width: 100%;
   min-width: 0;
   accent-color: #f97316;
+}
+
+.config-row--quality .image-control__slider {
+  flex: 1 1 8rem;
+  min-width: 5rem;
 }
 
 .image-button-group {
@@ -1325,6 +1658,23 @@ watch(
 
 .image-group-button {
   min-width: clamp(3rem, 7vw, 3.625rem);
+}
+
+.image-group-button--mode {
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.84rem;
+}
+
+.image-button-group--presets {
+  flex: 0 0 auto;
+  width: auto;
+  flex-wrap: nowrap;
+}
+
+.image-button-group--mode {
+  margin-left: 6px;
 }
 
 .label {
@@ -1348,7 +1698,7 @@ watch(
 }
 
 .image-format-hint {
-  margin: 0.7rem 0 0;
+  margin: 0.85rem 0 0;
   color: #64748b;
   font-size: 0.8rem;
   line-height: 1.6;
@@ -1669,8 +2019,7 @@ watch(
 }
 
 @media (max-width: 640px) {
-  .image-card,
-  .image-card--config {
+  .image-card {
     padding: 16px;
   }
 
@@ -1688,6 +2037,33 @@ watch(
 
   .image-toolbar-divider {
     display: none;
+  }
+
+  .image-toolbar-config {
+    padding-top: 14px;
+  }
+
+  .image-toolbar-config__layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .config-row--quality {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .config-row--quality .image-control__slider,
+  .image-button-group--presets {
+    width: 100%;
+  }
+
+  .image-button-group--presets {
+    flex-wrap: wrap;
+  }
+
+  .image-button-group--mode {
+    margin-left: 0;
   }
 
   .image-button-group {
