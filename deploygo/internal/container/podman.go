@@ -13,6 +13,7 @@ import (
 
 type PodmanRuntime struct {
 	command string
+	labels  containerLabelRegistry
 }
 
 func NewPodmanRuntime() (*PodmanRuntime, error) {
@@ -20,7 +21,10 @@ func NewPodmanRuntime() (*PodmanRuntime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("podman not found in PATH: %w", err)
 	}
-	return &PodmanRuntime{command: cmd}, nil
+	return &PodmanRuntime{
+		command: cmd,
+		labels:  newContainerLabelRegistry(),
+	}, nil
 }
 
 func (p *PodmanRuntime) Name() string {
@@ -80,7 +84,13 @@ func (p *PodmanRuntime) CreateContainer(ctx context.Context, cfg *ContainerConfi
 	args = append(args, cfg.Image)
 	args = append(args, cfg.Cmd...)
 
-	return p.runCommand(ctx, args...)
+	containerID, err := p.runCommand(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	p.labels.set(containerID, cfg.BuildName)
+	return containerID, nil
 }
 
 func (p *PodmanRuntime) StartContainer(ctx context.Context, id string) error {
@@ -93,11 +103,7 @@ func (p *PodmanRuntime) Exec(ctx context.Context, containerID string, cmd ...str
 	args = append(args, cmd...)
 
 	log.Printf("Executing: podman %s", strings.Join(args, " "))
-	execCmd := exec.CommandContext(ctx, p.command, args...)
-	execCmd.Stdout = os.Stdout
-	execCmd.Stderr = os.Stderr
-
-	return execCmd.Run()
+	return runStreamingCommand(ctx, p.command, p.labels.get(containerID), containerID, args...)
 }
 
 func (p *PodmanRuntime) WaitContainer(ctx context.Context, id string) error {
@@ -107,6 +113,9 @@ func (p *PodmanRuntime) WaitContainer(ctx context.Context, id string) error {
 
 func (p *PodmanRuntime) RemoveContainer(ctx context.Context, id string) error {
 	_, err := p.runCommand(ctx, "rm", "-f", id)
+	if err == nil {
+		p.labels.remove(id)
+	}
 	return err
 }
 

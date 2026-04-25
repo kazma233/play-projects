@@ -36,6 +36,7 @@ type ServerConfig struct {
 
 type StageConfig struct {
 	Name            string                `yaml:"name"`              // 阶段名称
+	Sync            bool                  `yaml:"sync"`              // 是否同步执行，true 表示单独串行执行
 	Image           string                `yaml:"image"`             // 容器镜像
 	WorkingDir      string                `yaml:"working_dir"`       // 容器内工作目录
 	Environment     []string              `yaml:"environment"`       // 环境变量

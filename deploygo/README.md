@@ -85,6 +85,7 @@ container:
 # ========== 构建配置 ==========
 builds:
   - name: build         # 构建步骤名称（唯一标识）
+    sync: true          # 是否同步执行；默认 false，false 会与其他非 sync 构建并发
     image: golang:1.21  # 使用的容器镜像
     working_dir: /app   # 容器内工作目录
     # 环境变量（支持 $VAR 展开）
@@ -112,6 +113,11 @@ builds:
       - from: "*.log"
         to_dir: logs/
         empty_to_dir: true
+
+# sync 调度规则：
+# 1. 默认 sync: false，构建会按批次并发执行
+# 2. sync: true 的构建会单独执行
+# 3. pipeline 会等待全部构建结束后再进入 deploy
 
 # ========== 服务器配置 ==========
 servers:

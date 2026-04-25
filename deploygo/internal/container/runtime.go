@@ -9,6 +9,7 @@ type ContainerConfig struct {
 	Cmd        []string
 	WorkingDir string
 	Env        []string
+	BuildName  string
 }
 
 type ContainerRuntime interface {

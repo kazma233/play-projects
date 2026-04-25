@@ -13,6 +13,7 @@ import (
 
 type DockerRuntime struct {
 	command string
+	labels  containerLabelRegistry
 }
 
 func NewDockerRuntime() (*DockerRuntime, error) {
@@ -20,7 +21,10 @@ func NewDockerRuntime() (*DockerRuntime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker not found in PATH: %w", err)
 	}
-	return &DockerRuntime{command: cmd}, nil
+	return &DockerRuntime{
+		command: cmd,
+		labels:  newContainerLabelRegistry(),
+	}, nil
 }
 
 func (d *DockerRuntime) Name() string {
@@ -80,7 +84,13 @@ func (d *DockerRuntime) CreateContainer(ctx context.Context, cfg *ContainerConfi
 	args = append(args, cfg.Image)
 	args = append(args, cfg.Cmd...)
 
-	return d.runCommand(ctx, args...)
+	containerID, err := d.runCommand(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	d.labels.set(containerID, cfg.BuildName)
+	return containerID, nil
 }
 
 func (d *DockerRuntime) StartContainer(ctx context.Context, id string) error {
@@ -93,11 +103,7 @@ func (d *DockerRuntime) Exec(ctx context.Context, containerID string, cmd ...str
 	args = append(args, cmd...)
 
 	log.Printf("Executing: docker %s", strings.Join(args, " "))
-	execCmd := exec.CommandContext(ctx, d.command, args...)
-	execCmd.Stdout = os.Stdout
-	execCmd.Stderr = os.Stderr
-
-	return execCmd.Run()
+	return runStreamingCommand(ctx, d.command, d.labels.get(containerID), containerID, args...)
 }
 
 func (d *DockerRuntime) WaitContainer(ctx context.Context, id string) error {
@@ -107,6 +113,9 @@ func (d *DockerRuntime) WaitContainer(ctx context.Context, id string) error {
 
 func (d *DockerRuntime) RemoveContainer(ctx context.Context, id string) error {
 	_, err := d.runCommand(ctx, "rm", "-f", id)
+	if err == nil {
+		d.labels.remove(id)
+	}
 	return err
 }
 

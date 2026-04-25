@@ -12,18 +12,15 @@ import (
 	"strings"
 )
 
-func RunBuilds(runtime container.ContainerRuntime, builds []config.StageConfig, projectDir string) error {
-	for i := range builds {
-		if err := runBuildEntry(runtime, &builds[i], projectDir, i+1, len(builds)); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func RunBuild(runtime container.ContainerRuntime, build *config.StageConfig, projectDir string) error {
 	return runBuildEntry(runtime, build, projectDir, 0, 0)
+}
+
+func shortContainerID(containerID string) string {
+	if len(containerID) <= 12 {
+		return containerID
+	}
+	return containerID[:12]
 }
 
 func runBuildEntry(runtime container.ContainerRuntime, build *config.StageConfig, projectDir string, index, total int) error {
@@ -56,6 +53,7 @@ func runBuild(runtime container.ContainerRuntime, build config.StageConfig, proj
 		Cmd:        []string{"sleep", "infinity"},
 		WorkingDir: build.WorkingDir,
 		Env:        build.Environment,
+		BuildName:  build.Name,
 	}
 
 	log.Printf("Creating container with image: %s", build.Image)
@@ -65,7 +63,7 @@ func runBuild(runtime container.ContainerRuntime, build config.StageConfig, proj
 	}
 	defer runtime.RemoveContainer(ctx, containerID)
 
-	log.Printf("Starting container %s", containerID[:12])
+	log.Printf("Starting container %s", shortContainerID(containerID))
 	if err := runtime.StartContainer(ctx, containerID); err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
@@ -94,7 +92,7 @@ func runBuild(runtime container.ContainerRuntime, build config.StageConfig, proj
 		if err := fileutil.GlobFiles(cp.From, projectDir, func(src string) error {
 			srcAbs := filepath.Join(projectDir, src)
 			dst := fileutil.ContainerPath(cp.ToDir, filepath.Base(src))
-			log.Printf("Copying %s -> %s:%s", srcAbs, containerID[:12], dst)
+			log.Printf("Copying %s -> %s:%s", srcAbs, shortContainerID(containerID), dst)
 			if err := runtime.CopyToContainer(ctx, containerID, srcAbs, dst); err != nil {
 				return fmt.Errorf("failed to copy to container: %w", err)
 			}
@@ -129,7 +127,7 @@ func runBuild(runtime container.ContainerRuntime, build config.StageConfig, proj
 			}
 		}
 
-		log.Printf("Copying %s:%s -> %s", containerID[:12], cp.From, toAbs)
+		log.Printf("Copying %s:%s -> %s", shortContainerID(containerID), cp.From, toAbs)
 		if err := runtime.CopyFromContainer(ctx, containerID, cp.From, toAbs); err != nil {
 			return fmt.Errorf("failed to copy from container: %w", err)
 		}
