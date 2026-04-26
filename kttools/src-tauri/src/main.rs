@@ -2,18 +2,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(target_os = "linux")]
-fn configure_linux_compatibility_env() {
+fn configure_linux_wayland_compatibility_env() {
     use std::path::Path;
 
-    let is_wayland = std::env::var("XDG_SESSION_TYPE")
-        .map(|value| value.eq_ignore_ascii_case("wayland"))
-        .unwrap_or(false)
-        || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let has_wayland_display = std::env::var_os("WAYLAND_DISPLAY").is_some();
 
-    if !is_wayland {
+    if !has_wayland_display {
         return;
     }
 
+    // These are WebKitGTK compatibility workarounds, not backend selection.
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         unsafe {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
@@ -34,9 +32,9 @@ fn configure_linux_compatibility_env() {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn configure_linux_compatibility_env() {}
+fn configure_linux_wayland_compatibility_env() {}
 
 fn main() {
-    configure_linux_compatibility_env();
+    configure_linux_wayland_compatibility_env();
     kt_tools_lib::run()
 }
