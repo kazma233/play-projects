@@ -34,24 +34,43 @@ target/release/kt-port
 
 ## 打包
 
-先安装 `cargo-packager`：
+项目现在使用 `cargo-bundle` 打包。
+
+先安装工具：
 
 ```bash
-cargo install cargo-packager --locked
+cargo install cargo-bundle --locked
 ```
 
-执行打包：
+执行构建：
 
 ```bash
-cargo packager --release
+cargo bundle --release
 
-# or
-cargo packager --release --formats appimage
+# or explicitly build deb on Linux
+cargo bundle --release --format deb
 ```
 
-打包配置在 `Packager.toml`，产物默认输出到 `dist/`。
+构建后会得到：
+
+- `target/release/bundle/deb/` 下的 `.deb` 安装包
+
+打包配置在 `Cargo.toml` 的 `[package.metadata.bundle]`。
+
+## Linux 安装
+
+### Debian / Ubuntu
+
+```bash
+sudo apt install ./target/release/bundle/deb/*.deb
+```
+
+安装后会把二进制、图标和 `.desktop` 文件放进系统目录，应用菜单里会像普通 Linux 程序一样显示。
 
 ## 说明
+
+- `cargo-bundle` 当前官方文档主路径的 Linux 包类型是 `.deb`
+- 如果还需要 `.rpm`，需要继续保留另一条打包链路
 
 - 项目使用 `iced` 构建界面
 - 端口扫描和终止逻辑在 `src/ports` 下

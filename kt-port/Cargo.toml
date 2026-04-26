@@ -2,12 +2,29 @@
 name = "kt-port"
 version = "0.1.0"
 edition = "2024"
+authors = ["kazma233"]
 description = "A desktop port viewer and process killer"
-homepage = "https:///kt-port.kazma.me"
-repository = "https://github.com/kazma233/play-projects/kt-port"
+homepage = "https://github.com/kazma233/play-projects"
+repository = "https://github.com/kazma233/play-projects"
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
-iced = "0.14.0"
+iced = { version = "0.14.0", features = ["image"] }
 serde = { version = "1.0.228", features = ["derive"] }
 sysinfo = "0.38.4"
+
+[package.metadata.bundle]
+name = "kt-port"
+identifier = "io.github.kazma233.kt-port"
+icon = [
+  "assets/icon.png",
+]
+copyright = "Copyright (c) 2026 kazma233"
+category = "Utility"
+short_description = "A desktop port viewer and process killer"
+long_description = """
+A desktop port viewer and process killer.
+"""
+linux_use_terminal = false

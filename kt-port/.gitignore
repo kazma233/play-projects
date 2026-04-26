@@ -1,3 +1,12 @@
+# Rust build outputs
+/target
+
+# Legacy cargo-packager output directory
+/dist
+
+# Local cargo-dist manifest output
+/dist-manifest.json
+
 # Logs
 logs
 *.log
@@ -7,9 +16,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Local overrides
 *.local
 
 # Editor directories and files
@@ -21,5 +28,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-target

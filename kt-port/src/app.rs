@@ -8,12 +8,13 @@ use iced::widget::{
     stack, text, text_input,
 };
 use iced::widget::text::Wrapping;
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Task, Theme};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Task, Theme, window};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use crate::ports::{self, KillTarget, PortInfo};
 
 const WINDOW_TITLE: &str = "kt-port";
+const WINDOW_ICON_BYTES: &[u8] = include_bytes!("../assets/icon.png");
 const STATUS_OPTIONS: [StatusFilter; 14] = [
     StatusFilter::All,
     StatusFilter::Listen,
@@ -213,9 +214,17 @@ pub fn run() -> iced::Result {
     iced::application(PortApp::boot, PortApp::update, PortApp::view)
         .title(app_title)
         .theme(app_theme)
-        .window_size(iced::Size::new(1420.0, 900.0))
-        .centered()
+        .window(window_settings())
         .run()
+}
+
+fn window_settings() -> window::Settings {
+    window::Settings {
+        size: iced::Size::new(1420.0, 900.0),
+        position: window::Position::Centered,
+        icon: window::icon::from_file_data(WINDOW_ICON_BYTES, None).ok(),
+        ..window::Settings::default()
+    }
 }
 
 impl Default for PortApp {
