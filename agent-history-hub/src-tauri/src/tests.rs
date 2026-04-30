@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -316,6 +317,169 @@ fn claude_ignores_agents_banner_when_picking_title() -> Result<()> {
     let summary = session::reader(SourceApp::ClaudeCode).parse_summary(&session_file)?;
 
     assert_eq!(summary.title, "How do I list the current files?");
+
+    fs::remove_dir_all(&temp_home).ok();
+    Ok(())
+}
+
+#[test]
+fn claude_skips_unreadable_files_when_indexing() -> Result<()> {
+    let temp_home = env::temp_dir().join(format!("agent-session-hub-test-{}", Uuid::new_v4()));
+    fs::create_dir_all(&temp_home)?;
+    let _guard = HomeGuard::set(&temp_home);
+
+    let valid_path = temp_home
+        .join(".claude/projects/demo-project")
+        .join("session-123.jsonl");
+    let invalid_path = temp_home
+        .join(".claude/projects/demo-project")
+        .join("broken.jsonl");
+
+    write_jsonl(
+        &valid_path,
+        &[json!({
+            "type": "user",
+            "message": {
+                "content": "Valid task"
+            }
+        })],
+    )?;
+
+    fs::write(&invalid_path, "{ not valid json }\n")?;
+
+    let entries = session::reader(SourceApp::ClaudeCode).list_entries()?;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].path, valid_path);
+
+    fs::remove_dir_all(&temp_home).ok();
+    Ok(())
+}
+
+#[test]
+fn claude_root_session_aggregates_subagent_sessions() -> Result<()> {
+    let temp_home = env::temp_dir().join(format!("agent-session-hub-test-{}", Uuid::new_v4()));
+    fs::create_dir_all(&temp_home)?;
+    let _guard = HomeGuard::set(&temp_home);
+
+    let root_id = "root-session";
+    let child_id = "child-session";
+    let project_dir = temp_home.join(".claude/projects/demo-project");
+    let root_path = project_dir.join(format!("{root_id}.jsonl"));
+    let child_path = project_dir
+        .join("subagents")
+        .join(format!("agent-{child_id}.jsonl"));
+    let child_meta_path = project_dir
+        .join("subagents")
+        .join(format!("agent-{child_id}.meta.json"));
+
+    write_jsonl(
+        &root_path,
+        &[
+            json!({
+                "timestamp": "2026-04-21T12:00:00.000Z",
+                "sessionId": root_id,
+                "type": "user",
+                "message": {
+                    "content": "Main task"
+                }
+            }),
+            json!({
+                "timestamp": "2026-04-21T12:00:01.000Z",
+                "sessionId": root_id,
+                "type": "assistant",
+                "message": {
+                    "content": "Root answer"
+                }
+            }),
+        ],
+    )?;
+
+    write_jsonl(
+        &child_path,
+        &[
+            json!({
+                "timestamp": "2026-04-21T15:00:00.000Z",
+                "sessionId": root_id,
+                "type": "user",
+                "message": {
+                    "content": "Child task"
+                }
+            }),
+            json!({
+                "timestamp": "2026-04-21T15:00:01.000Z",
+                "sessionId": root_id,
+                "type": "assistant",
+                "message": {
+                    "content": "Child answer"
+                }
+            }),
+        ],
+    )?;
+
+    fs::write(
+        &child_meta_path,
+        r#"{"agentType":"Explore","description":"Find fetch_rss scheduling code"}"#,
+    )?;
+
+    let reader = session::reader(SourceApp::ClaudeCode);
+    let entries = reader.list_entries()?;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].path, root_path);
+    assert!(entries[0]
+        .summary
+        .as_ref()
+        .is_some_and(|summary| summary.title.contains("+1 subagents")));
+
+    let overview = reader.parse_overview(&root_path)?;
+    assert_eq!(overview.summary.source_session_id, root_id);
+    assert_eq!(overview.agents.len(), 2);
+    assert_eq!(
+        overview
+            .agents
+            .iter()
+            .map(|agent| agent.session_id.as_str())
+            .collect::<HashSet<_>>()
+            .len(),
+        2
+    );
+    assert!(overview
+        .agents
+        .iter()
+        .any(|agent| agent.is_root && agent.session_id == root_id && agent.label == "主 Agent"));
+    assert!(overview.agents.iter().any(|agent| {
+        !agent.is_root
+            && agent.session_id == child_id
+            && agent.label == "Find fetch_rss scheduling code(子)"
+    }));
+
+    let detail = reader.parse_detail(&root_path)?;
+    let root_path_string = root_path.display().to_string();
+    let child_path_string = child_path.display().to_string();
+    assert_eq!(detail.source_paths.len(), 2);
+    assert!(detail
+        .source_paths
+        .iter()
+        .any(|path| path == &root_path_string));
+    assert!(detail
+        .source_paths
+        .iter()
+        .any(|path| path == &child_path_string));
+    assert!(detail.messages.iter().any(|message| {
+        message.blocks.iter().any(|block| {
+            block.text.as_deref().is_some_and(|text| {
+                text.contains("Sub-agent session: Find fetch_rss scheduling code")
+            })
+        })
+    }));
+    assert!(detail
+        .events
+        .iter()
+        .any(|event| event.kind == "subagent_started"));
+
+    let (_, exported_paths) = session::claude_code::write_session(&detail, "exported-session")?;
+    let exported = fs::read_to_string(&exported_paths[0])?;
+    assert!(!exported.contains("Sub-agent session:"));
+    assert!(!exported.contains("\"subagent_started\""));
 
     fs::remove_dir_all(&temp_home).ok();
     Ok(())

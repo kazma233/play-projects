@@ -28,7 +28,7 @@ type AppState = {
   setError: (error: string | null) => void;
 };
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   sources: [],
   selectedSource: "codex",
   sessions: [],
@@ -39,13 +39,18 @@ export const useAppStore = create<AppState>((set) => ({
   loadingDetail: false,
   error: null,
   setSources: (sources) => set({ sources }),
-  setSelectedSource: (selectedSource) =>
+  setSelectedSource: (selectedSource) => {
+    if (get().selectedSource === selectedSource) {
+      return;
+    }
+
     set({
       selectedSource,
       sessions: [],
       selectedSessionKey: null,
       sessionDetail: null
-    }),
+    });
+  },
   setSessions: (sessions) => set({ sessions }),
   appendSessions: (incomingSessions) =>
     set((state) => {

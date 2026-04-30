@@ -297,7 +297,7 @@ fn parse_overview(path: &Path) -> Result<SessionDetailOverview> {
                 label: if row.id == family.root.id {
                     "主 Agent".to_string()
                 } else {
-                    row.title.clone()
+                    format!("{}(子)", row.title)
                 },
                 is_root: row.id == family.root.id,
             })

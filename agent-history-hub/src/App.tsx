@@ -117,9 +117,12 @@ export default function App() {
         const hasCurrent = nextPage.sessions.some(
           (session) => session.transcriptPath === currentSelectedSessionKey
         );
+        const firstSessionKey = nextPage.sessions[0]?.transcriptPath ?? null;
 
         if (hasCurrent) {
           setSelectedSessionKey(currentSelectedSessionKey);
+        } else if (firstSessionKey) {
+          setSelectedSessionKey(firstSessionKey);
         } else {
           setSelectedSessionKey(null);
           setSessionDetail(null);

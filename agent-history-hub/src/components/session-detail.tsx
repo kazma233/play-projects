@@ -463,6 +463,22 @@ function agentLabel(sessionId: string, agents: SessionAgent[]): string {
   return `Agent ${sessionId.slice(0, 8)}`;
 }
 
+function agentDisplayLabel(sessionId: string, agents: SessionAgent[]): string {
+  const label = agentLabel(sessionId, agents);
+
+  if (label === "主 Agent" || label.startsWith("Agent ")) {
+    return label;
+  }
+
+  const duplicateCount = agents.filter((agent) => agent.label === label).length;
+
+  if (duplicateCount <= 1) {
+    return label;
+  }
+
+  return `${label} · ${sessionId.slice(0, 8)}`;
+}
+
 function extractErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) {
     return error.message;
@@ -621,7 +637,7 @@ function renderMessageCard(
   const isMarker = isSubagentMarkerMessage(message);
   const messageAgentId = message.sessionId ?? rootSessionId;
   const isInSubagent = messageAgentId !== rootSessionId;
-  const agentName = agentLabel(messageAgentId, agentOptions);
+  const agentName = agentDisplayLabel(messageAgentId, agentOptions);
 
   return (
     <article key={messageKey} className={messageCardClassName(isMarker, isInSubagent)}>
@@ -1031,7 +1047,7 @@ export function SessionDetail(props: SessionDetailProps) {
       return "全部 Agent";
     }
 
-    return agentLabel(selectedAgentId, agentOptions);
+    return agentDisplayLabel(selectedAgentId, agentOptions);
   }, [activeDetail, agentOptions, selectedAgentId]);
   const visibleMessageLabel = useMemo(() => {
     if (!activeDetail) {
@@ -1577,7 +1593,7 @@ export function SessionDetail(props: SessionDetailProps) {
                   onClick={() => setSelectedAgentId(agent.sessionId)}
                   type="button"
                 >
-                  {agent.label}
+                  {agentDisplayLabel(agent.sessionId, agentOptions)}
                 </button>
               ))}
               <button

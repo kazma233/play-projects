@@ -1,11 +1,13 @@
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use dirs::home_dir;
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -21,16 +23,85 @@ pub(crate) struct ClaudeCodeBackend;
 
 pub(crate) static BACKEND: ClaudeCodeBackend = ClaudeCodeBackend;
 
+#[derive(Clone, Debug)]
+struct ClaudeSessionRow {
+    path: PathBuf,
+    summary: SessionSummary,
+    agent_session_id: String,
+    agent_label: Option<String>,
+    is_root: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ClaudeSessionFamily {
+    root: ClaudeSessionRow,
+    members: Vec<ClaudeSessionRow>,
+}
+
+#[derive(Clone, Default)]
+struct ClaudeTimelineCacheEntry {
+    updated_at: i64,
+    messages: Option<Vec<SessionMessage>>,
+    events: Option<Vec<SessionEvent>>,
+}
+
+#[derive(Clone, Default)]
+struct ClaudeFamilyIndexCacheEntry {
+    updated_at: i64,
+    families: Vec<ClaudeSessionFamily>,
+    sessions_by_path: HashMap<String, ClaudeSessionFamily>,
+}
+
+#[derive(Deserialize)]
+struct ClaudeAgentMeta {
+    #[serde(rename = "agentType")]
+    agent_type: Option<String>,
+    description: Option<String>,
+    name: Option<String>,
+}
+
+static CLAUDE_TIMELINE_CACHE: LazyLock<Mutex<HashMap<String, ClaudeTimelineCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static CLAUDE_FAMILY_INDEX_CACHE: LazyLock<Mutex<Option<ClaudeFamilyIndexCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+fn lock_timeline_cache(
+) -> Result<std::sync::MutexGuard<'static, HashMap<String, ClaudeTimelineCacheEntry>>> {
+    CLAUDE_TIMELINE_CACHE
+        .lock()
+        .map_err(|_| anyhow!("Claude timeline cache lock was poisoned"))
+}
+
+fn lock_family_index_cache(
+) -> Result<std::sync::MutexGuard<'static, Option<ClaudeFamilyIndexCacheEntry>>> {
+    CLAUDE_FAMILY_INDEX_CACHE
+        .lock()
+        .map_err(|_| anyhow!("Claude family index cache lock was poisoned"))
+}
+
 impl SessionReader for ClaudeCodeBackend {
     fn list_entries(&self) -> Result<Vec<SessionFileEntry>> {
-        let root = root()?.join("projects");
-        let mut entries = crate::enumerate_jsonl_files(&root)?
+        let mut entries = list_session_families()?
             .into_iter()
-            .map(crate::index_session_file)
-            .collect::<Result<Vec<_>>>()?;
+            .map(|family| {
+                let summary = family_summary(&family);
+                let sort_timestamp = family_updated_at(&family);
+                SessionFileEntry {
+                    path: family.root.path.clone(),
+                    sort_timestamp,
+                    summary: Some(summary),
+                }
+            })
+            .collect::<Vec<_>>();
 
         super::sort_entries(&mut entries);
         Ok(entries)
+    }
+
+    fn clear_cache(&self) -> Result<()> {
+        lock_timeline_cache()?.clear();
+        *lock_family_index_cache()? = None;
+        Ok(())
     }
 
     fn resolve_path(&self, source_session_id: &str) -> Result<PathBuf> {
@@ -101,84 +172,410 @@ pub(crate) fn find_session_file(source_session_id: &str) -> Result<PathBuf> {
     crate::find_session_file(&root()?.join("projects"), source_session_id)
 }
 
-fn parse_summary(path: &Path) -> Result<SessionSummary> {
+pub(crate) fn count_sessions() -> Result<usize> {
+    Ok(list_session_families()?.len())
+}
+
+fn list_session_rows() -> Result<Vec<ClaudeSessionRow>> {
+    let mut rows = Vec::new();
+
+    for path in crate::enumerate_jsonl_files(&root()?.join("projects"))? {
+        if let Ok(row) = parse_session_row(&path) {
+            rows.push(row);
+        }
+    }
+
+    Ok(rows)
+}
+
+fn list_session_families() -> Result<Vec<ClaudeSessionFamily>> {
+    Ok(family_index()?.families)
+}
+
+fn family_index() -> Result<ClaudeFamilyIndexCacheEntry> {
+    let updated_at = claude_projects_timestamp()?;
+
+    if let Some(entry) = lock_family_index_cache()?
+        .as_ref()
+        .filter(|entry| entry.updated_at == updated_at)
+        .cloned()
+    {
+        return Ok(entry);
+    }
+
+    let rows = list_session_rows()?;
+    let by_id = rows
+        .iter()
+        .cloned()
+        .map(|row| (row.summary.source_session_id.clone(), row))
+        .collect::<HashMap<_, _>>();
+    let mut grouped = HashMap::<String, Vec<ClaudeSessionRow>>::new();
+
+    for row in rows {
+        grouped
+            .entry(row.summary.source_session_id.clone())
+            .or_default()
+            .push(row);
+    }
+
+    let mut families = grouped
+        .into_iter()
+        .filter_map(|(root_id, mut members)| {
+            members.sort_by(|left, right| {
+                left.summary
+                    .created_at
+                    .cmp(&right.summary.created_at)
+                    .then_with(|| left.path.cmp(&right.path))
+            });
+
+            let root = members
+                .iter()
+                .find(|row| row.is_root)
+                .cloned()
+                .or_else(|| {
+                    by_id
+                        .get(&root_id)
+                        .cloned()
+                        .or_else(|| members.first().cloned())
+                })?;
+
+            Some(ClaudeSessionFamily { root, members })
+        })
+        .collect::<Vec<_>>();
+
+    families.sort_by(|left, right| {
+        family_updated_at(right)
+            .cmp(&family_updated_at(left))
+            .then_with(|| left.root.path.cmp(&right.root.path))
+    });
+
+    let mut sessions_by_path = HashMap::new();
+
+    for family in &families {
+        for member in &family.members {
+            sessions_by_path.insert(member.path.display().to_string(), family.clone());
+        }
+    }
+
+    let entry = ClaudeFamilyIndexCacheEntry {
+        updated_at,
+        families,
+        sessions_by_path,
+    };
+
+    *lock_family_index_cache()? = Some(entry.clone());
+
+    Ok(entry)
+}
+
+fn session_family_for_path(path: &Path) -> Result<ClaudeSessionFamily> {
+    let key = path.display().to_string();
+    family_index()?
+        .sessions_by_path
+        .get(&key)
+        .cloned()
+        .ok_or_else(|| anyhow!("Could not find Claude Code session for {}", path.display()))
+}
+
+fn parse_session_row(path: &Path) -> Result<ClaudeSessionRow> {
     let mut summary = SummaryAccumulator::default();
+    let is_root = is_root_transcript(path);
 
     for line in BufReader::new(File::open(path)?).lines() {
         let value = crate::parse_json_line(&line?)?;
         crate::update_summary_timestamp(&mut summary, &value);
 
-        match crate::json_type(&value) {
-            Some("user") | Some("assistant") => {
-                summary.session_id = summary
-                    .session_id
-                    .or_else(|| crate::json_string(&value, &["sessionId"]));
-                summary.cwd = summary.cwd.or_else(|| crate::json_string(&value, &["cwd"]));
-                summary.git_branch = summary
-                    .git_branch
-                    .or_else(|| crate::json_string(&value, &["gitBranch"]));
+        if summary.session_id.is_none() {
+            summary.session_id = crate::json_string(&value, &["sessionId"]);
+        }
+        if summary.cwd.is_none() {
+            summary.cwd = crate::json_string(&value, &["cwd"]);
+        }
+        if summary.git_branch.is_none() {
+            summary.git_branch = crate::json_string(&value, &["gitBranch"]);
+        }
 
-                if crate::json_type(&value) == Some("user") && summary.title.is_none() {
-                    summary.title = extract_title(value.get("message"));
-                }
-            }
-            _ => {}
+        if crate::json_type(&value) == Some("user") && summary.title.is_none() {
+            summary.title = extract_title(value.get("message"));
         }
     }
 
-    crate::build_summary(SourceApp::ClaudeCode, path, summary)
+    let summary = crate::build_summary(SourceApp::ClaudeCode, path, summary)?;
+    let agent_session_id = if is_root {
+        summary.source_session_id.clone()
+    } else {
+        subagent_session_id_from_path(path).unwrap_or_else(|| summary.source_session_id.clone())
+    };
+    let agent_label = if is_root {
+        None
+    } else {
+        subagent_label_from_path(path)
+    };
+
+    Ok(ClaudeSessionRow {
+        path: path.to_path_buf(),
+        summary,
+        agent_session_id,
+        agent_label,
+        is_root,
+    })
+}
+
+fn is_root_transcript(path: &Path) -> bool {
+    path.parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        != Some("subagents")
+}
+
+fn subagent_session_id_from_path(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem.strip_prefix("agent-").unwrap_or(stem).to_string())
+}
+
+fn subagent_label_from_path(path: &Path) -> Option<String> {
+    let metadata_path = path.with_extension("meta.json");
+    let metadata = fs::read_to_string(metadata_path).ok()?;
+    let value = serde_json::from_str::<Value>(&metadata).ok()?;
+    subagent_label_from_metadata(&value)
+}
+
+fn subagent_label_from_metadata(value: &Value) -> Option<String> {
+    let metadata = serde_json::from_value::<ClaudeAgentMeta>(value.clone()).ok()?;
+    metadata
+        .description
+        .or(metadata.agent_type)
+        .or(metadata.name)
+        .map(crate::normalize_title)
+        .filter(|label| !label.is_empty())
+}
+
+fn family_summary(family: &ClaudeSessionFamily) -> SessionSummary {
+    let mut summary = family.root.summary.clone();
+    let child_count = family.members.len().saturating_sub(1);
+
+    if child_count > 0 {
+        summary.title = format!("{} (+{} subagents)", summary.title, child_count);
+    }
+
+    summary.transcript_path = family.root.path.display().to_string();
+    summary.created_at = family_created_at(family);
+    summary.updated_at = Some(family_updated_at(family));
+    summary
+}
+
+fn family_created_at(family: &ClaudeSessionFamily) -> Option<i64> {
+    family
+        .members
+        .iter()
+        .filter_map(|row| row.summary.created_at)
+        .min()
+}
+
+fn family_updated_at(family: &ClaudeSessionFamily) -> i64 {
+    family
+        .members
+        .iter()
+        .filter_map(|row| row.summary.updated_at)
+        .max()
+        .unwrap_or_default()
+}
+
+fn family_source_paths(family: &ClaudeSessionFamily) -> Vec<String> {
+    family
+        .members
+        .iter()
+        .map(|row| row.path.display().to_string())
+        .collect()
+}
+
+fn family_member_display_name(row: &ClaudeSessionRow) -> String {
+    row.agent_label
+        .clone()
+        .or_else(|| {
+            row.path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(|stem| stem.strip_prefix("agent-").unwrap_or(stem).to_string())
+        })
+        .unwrap_or_else(|| row.summary.title.clone())
+}
+
+fn family_agents(family: &ClaudeSessionFamily) -> Vec<SessionAgent> {
+    family
+        .members
+        .iter()
+        .map(|row| SessionAgent {
+            session_id: row.agent_session_id.clone(),
+            label: if row.is_root {
+                "主 Agent".to_string()
+            } else {
+                format!("{}(子)", family_member_display_name(row))
+            },
+            is_root: row.is_root,
+        })
+        .collect()
+}
+
+fn claude_path_timestamp(path: &Path) -> Result<i64> {
+    let mut latest = crate::file_modified_timestamp_millis(path)?;
+
+    if let Some(parent) = path.parent() {
+        latest = latest.max(crate::file_modified_timestamp_millis(parent)?);
+    }
+
+    Ok(latest)
+}
+
+fn claude_projects_timestamp() -> Result<i64> {
+    let mut latest = 0;
+
+    for path in crate::enumerate_jsonl_files(&root()?.join("projects"))? {
+        latest = latest.max(claude_path_timestamp(&path)?);
+
+        if !is_root_transcript(&path) {
+            let metadata_path = path.with_extension("meta.json");
+            if metadata_path.exists() {
+                latest = latest.max(claude_path_timestamp(&metadata_path)?);
+            }
+        }
+    }
+
+    Ok(latest)
+}
+
+fn family_timestamp(family: &ClaudeSessionFamily) -> Result<i64> {
+    family.members.iter().try_fold(0, |latest, row| {
+        let mut row_latest = crate::file_modified_timestamp_millis(&row.path)?;
+
+        if !row.is_root {
+            if let Some(parent) = row.path.parent() {
+                row_latest = row_latest.max(crate::file_modified_timestamp_millis(parent)?);
+            }
+        }
+
+        Ok(latest.max(row_latest))
+    })
+}
+
+fn cached_messages_for_family(family: &ClaudeSessionFamily) -> Result<Vec<SessionMessage>> {
+    let cache_key = family.root.summary.source_session_id.clone();
+    let updated_at = family_timestamp(family)?;
+
+    if let Some(messages) = lock_timeline_cache()?.get(&cache_key).and_then(|entry| {
+        (entry.updated_at == updated_at)
+            .then(|| entry.messages.clone())
+            .flatten()
+    }) {
+        return Ok(messages);
+    }
+
+    let messages = load_messages_for_family(family)?;
+    let mut cache = lock_timeline_cache()?;
+    let entry = cache.entry(cache_key).or_default();
+    entry.updated_at = updated_at;
+    entry.messages = Some(messages.clone());
+    Ok(messages)
+}
+
+fn cached_events_for_family(family: &ClaudeSessionFamily) -> Result<Vec<SessionEvent>> {
+    let cache_key = family.root.summary.source_session_id.clone();
+    let updated_at = family_timestamp(family)?;
+
+    if let Some(events) = lock_timeline_cache()?.get(&cache_key).and_then(|entry| {
+        (entry.updated_at == updated_at)
+            .then(|| entry.events.clone())
+            .flatten()
+    }) {
+        return Ok(events);
+    }
+
+    let events = load_events_for_family(family)?;
+    let mut cache = lock_timeline_cache()?;
+    let entry = cache.entry(cache_key).or_default();
+    entry.updated_at = updated_at;
+    entry.events = Some(events.clone());
+    Ok(events)
+}
+
+fn subagent_marker_message(row: &ClaudeSessionRow) -> SessionMessage {
+    SessionMessage {
+        id: format!("claude-subagent-start-{}", row.agent_session_id),
+        role: "assistant".to_string(),
+        timestamp: row.summary.created_at,
+        blocks: vec![ContentBlock {
+            kind: "output_text".to_string(),
+            text: Some(format!(
+                "Sub-agent session: {}\n{}",
+                family_member_display_name(row),
+                row.agent_session_id
+            )),
+            tool_name: None,
+            tool_call_id: None,
+            payload: Some(json!({
+                "type": "subagent_started",
+                "session_id": row.agent_session_id,
+                "title": family_member_display_name(row),
+                "transcript_path": row.path.display().to_string(),
+                "is_sidechain": true,
+            })),
+        }],
+        session_id: Some(row.agent_session_id.clone()),
+    }
+}
+
+fn subagent_marker_event(row: &ClaudeSessionRow) -> SessionEvent {
+    SessionEvent {
+        id: format!("claude-subagent-event-{}", row.agent_session_id),
+        kind: "subagent_started".to_string(),
+        timestamp: row.summary.created_at,
+        summary: format!(
+            "Sub-agent session started: {}",
+            family_member_display_name(row)
+        ),
+        payload: Some(json!({
+            "session_id": row.agent_session_id,
+            "title": family_member_display_name(row),
+            "transcript_path": row.path.display().to_string(),
+            "is_sidechain": true,
+        })),
+        session_id: Some(row.agent_session_id.clone()),
+    }
+}
+
+fn parse_summary(path: &Path) -> Result<SessionSummary> {
+    let family = session_family_for_path(path)?;
+    Ok(family_summary(&family))
 }
 
 fn parse_overview(path: &Path) -> Result<SessionDetailOverview> {
-    let summary = parse_summary(path)?;
-    let root_session_id = summary.source_session_id.clone();
-    let mut message_count = 0;
-    let mut event_count = 0;
-
-    for (index, line) in BufReader::new(File::open(path)?).lines().enumerate() {
-        let value = crate::parse_json_line(&line?)?;
-
-        match parse_timeline_record(index, &value) {
-            Some(TimelineRecord::Message(_)) => message_count += 1,
-            Some(TimelineRecord::Event(_)) => event_count += 1,
-            None => {}
-        }
-    }
+    let family = session_family_for_path(path)?;
+    let summary = family_summary(&family);
+    let messages = cached_messages_for_family(&family)?;
+    let events = cached_events_for_family(&family)?;
 
     Ok(SessionDetailOverview {
         summary,
-        source_paths: vec![path.display().to_string()],
-        message_count: Some(message_count),
-        event_count: Some(event_count),
-        agents: vec![SessionAgent {
-            session_id: root_session_id,
-            label: "主 Agent".to_string(),
-            is_root: true,
-        }],
+        source_paths: family_source_paths(&family),
+        message_count: Some(messages.len()),
+        event_count: Some(events.len()),
+        agents: family_agents(&family),
     })
 }
 
 fn parse_messages_page(path: &Path, offset: usize, limit: usize) -> Result<SessionMessagePage> {
-    let mut messages = Vec::new();
-    let mut total_count = 0;
-
-    for (index, line) in BufReader::new(File::open(path)?).lines().enumerate() {
-        let value = crate::parse_json_line(&line?)?;
-
-        if let Some(TimelineRecord::Message(message)) = parse_timeline_record(index, &value) {
-            if total_count >= offset && messages.len() < limit {
-                messages.push(message);
-            }
-
-            total_count += 1;
-        }
-    }
-
-    let next_offset = (offset + messages.len() < total_count).then_some(offset + messages.len());
+    let family = session_family_for_path(path)?;
+    let all_messages = cached_messages_for_family(&family)?;
+    let total_count = all_messages.len();
+    let start = offset.min(total_count);
+    let end = start.saturating_add(limit).min(total_count);
+    let messages = all_messages[start..end].to_vec();
+    let next_offset = (end < total_count).then_some(end);
 
     Ok(SessionMessagePage {
         messages,
-        offset,
+        offset: start,
         limit,
         next_offset,
         total_count,
@@ -187,26 +584,17 @@ fn parse_messages_page(path: &Path, offset: usize, limit: usize) -> Result<Sessi
 }
 
 fn parse_events_page(path: &Path, offset: usize, limit: usize) -> Result<SessionEventPage> {
-    let mut events = Vec::new();
-    let mut total_count = 0;
-
-    for (index, line) in BufReader::new(File::open(path)?).lines().enumerate() {
-        let value = crate::parse_json_line(&line?)?;
-
-        if let Some(TimelineRecord::Event(event)) = parse_timeline_record(index, &value) {
-            if total_count >= offset && events.len() < limit {
-                events.push(event);
-            }
-
-            total_count += 1;
-        }
-    }
-
-    let next_offset = (offset + events.len() < total_count).then_some(offset + events.len());
+    let family = session_family_for_path(path)?;
+    let all_events = cached_events_for_family(&family)?;
+    let total_count = all_events.len();
+    let start = offset.min(total_count);
+    let end = start.saturating_add(limit).min(total_count);
+    let events = all_events[start..end].to_vec();
+    let next_offset = (end < total_count).then_some(end);
 
     Ok(SessionEventPage {
         events,
-        offset,
+        offset: start,
         limit,
         next_offset,
         total_count,
@@ -215,28 +603,20 @@ fn parse_events_page(path: &Path, offset: usize, limit: usize) -> Result<Session
 }
 
 fn parse_detail(path: &Path) -> Result<SessionDetail> {
-    let summary = parse_summary(path)?;
-    let mut messages = Vec::new();
-    let mut events = Vec::new();
-
-    for (index, line) in BufReader::new(File::open(path)?).lines().enumerate() {
-        let value = crate::parse_json_line(&line?)?;
-        match parse_timeline_record(index, &value) {
-            Some(TimelineRecord::Message(message)) => messages.push(message),
-            Some(TimelineRecord::Event(event)) => events.push(event),
-            None => {}
-        }
-    }
+    let family = session_family_for_path(path)?;
+    let summary = family_summary(&family);
+    let messages = cached_messages_for_family(&family)?;
+    let events = cached_events_for_family(&family)?;
 
     Ok(SessionDetail {
         summary,
-        source_paths: vec![path.display().to_string()],
+        source_paths: family_source_paths(&family),
         messages,
         events,
     })
 }
 
-fn parse_timeline_record(index: usize, value: &Value) -> Option<TimelineRecord> {
+fn parse_timeline_record(index: usize, value: &Value, session_id: &str) -> Option<TimelineRecord> {
     let timestamp = value
         .get("timestamp")
         .and_then(Value::as_str)
@@ -261,7 +641,7 @@ fn parse_timeline_record(index: usize, value: &Value) -> Option<TimelineRecord> 
                     role,
                     timestamp,
                     blocks,
-                    session_id: crate::json_string(value, &["sessionId"]),
+                    session_id: Some(session_id.to_string()),
                 }));
             }
         }
@@ -273,12 +653,83 @@ fn parse_timeline_record(index: usize, value: &Value) -> Option<TimelineRecord> 
                 timestamp,
                 summary: crate::summarize_event(kind.as_str(), value),
                 payload: Some(value.clone()),
-                session_id: crate::json_string(value, &["sessionId"]),
+                session_id: Some(session_id.to_string()),
             }));
         }
     }
 
     None
+}
+
+fn load_messages(path: &Path, session_id: &str) -> Result<Vec<SessionMessage>> {
+    let mut messages = Vec::new();
+
+    for (index, line) in BufReader::new(File::open(path)?).lines().enumerate() {
+        let value = crate::parse_json_line(&line?)?;
+
+        if let Some(TimelineRecord::Message(message)) =
+            parse_timeline_record(index, &value, session_id)
+        {
+            messages.push(message);
+        }
+    }
+
+    Ok(messages)
+}
+
+fn load_events(path: &Path, session_id: &str) -> Result<Vec<SessionEvent>> {
+    let mut events = Vec::new();
+
+    for (index, line) in BufReader::new(File::open(path)?).lines().enumerate() {
+        let value = crate::parse_json_line(&line?)?;
+
+        if let Some(TimelineRecord::Event(event)) = parse_timeline_record(index, &value, session_id)
+        {
+            events.push(event);
+        }
+    }
+
+    Ok(events)
+}
+
+fn load_messages_for_family(family: &ClaudeSessionFamily) -> Result<Vec<SessionMessage>> {
+    let mut messages = Vec::new();
+
+    for row in &family.members {
+        if !row.is_root {
+            messages.push(subagent_marker_message(row));
+        }
+
+        messages.extend(load_messages(&row.path, &row.agent_session_id)?);
+    }
+
+    messages.sort_by(|left, right| {
+        left.timestamp
+            .cmp(&right.timestamp)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    Ok(messages)
+}
+
+fn load_events_for_family(family: &ClaudeSessionFamily) -> Result<Vec<SessionEvent>> {
+    let mut events = Vec::new();
+
+    for row in &family.members {
+        if !row.is_root {
+            events.push(subagent_marker_event(row));
+        }
+
+        events.extend(load_events(&row.path, &row.agent_session_id)?);
+    }
+
+    events.sort_by(|left, right| {
+        left.timestamp
+            .cmp(&right.timestamp)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    Ok(events)
 }
 
 fn parse_message_blocks(content: Option<&Value>, role: &str) -> Vec<ContentBlock> {
@@ -350,6 +801,10 @@ pub(crate) fn write_session(
     let mut lines = Vec::new();
 
     for message in &detail.messages {
+        if is_subagent_marker_message(message) {
+            continue;
+        }
+
         append_records(
             &mut lines,
             message,
@@ -576,6 +1031,21 @@ fn append_records(
     }
 
     Ok(())
+}
+
+fn is_subagent_marker_message(message: &SessionMessage) -> bool {
+    if message.role != "assistant" {
+        return false;
+    }
+
+    message.blocks.iter().any(|block| {
+        block
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("type"))
+            .and_then(Value::as_str)
+            == Some("subagent_started")
+    })
 }
 
 fn push_record(

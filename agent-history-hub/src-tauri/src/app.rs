@@ -6,9 +6,9 @@ use anyhow::{bail, Context, Result};
 use crate::session;
 use crate::state::{SessionFileCatalog, SessionIndexState};
 use crate::{
-    count_jsonl_files, generate_target_session_id, ImportPreview, ImportResult, SessionDetail,
-    SessionDetailOverview, SessionEventPage, SessionFileEntry, SessionMessagePage, SessionPage,
-    SessionSummary, SourceApp, SourceStatus,
+    generate_target_session_id, ImportPreview, ImportResult, SessionDetail, SessionDetailOverview,
+    SessionEventPage, SessionFileEntry, SessionMessagePage, SessionPage, SessionSummary, SourceApp,
+    SourceStatus,
 };
 
 const DEFAULT_SESSION_PAGE_SIZE: usize = 20;
@@ -204,7 +204,7 @@ fn detect_sources_inner() -> Result<Vec<SourceStatus>> {
             root_path: claude_root
                 .exists()
                 .then(|| claude_root.display().to_string()),
-            session_count: count_jsonl_files(&claude_root.join("projects")),
+            session_count: session::claude_code::count_sessions().unwrap_or_default(),
             note: claude_root
                 .exists()
                 .then(|| "Reading project-level session JSONL files.".to_string()),
