@@ -11,9 +11,9 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::{
-    ContentBlock, SessionAgent, SessionDetail, SessionDetailOverview, SessionEvent, SessionEventPage,
-    SessionFileEntry, SessionMessage, SessionMessagePage, SessionSummary, SourceApp,
-    SummaryAccumulator, TimelineRecord,
+    ContentBlock, SessionAgent, SessionDetail, SessionDetailOverview, SessionEvent,
+    SessionEventPage, SessionFileEntry, SessionMessage, SessionMessagePage, SessionSummary,
+    SourceApp, SummaryAccumulator, TimelineRecord,
 };
 
 use super::{SessionExporter, SessionReader};
@@ -60,6 +60,7 @@ struct CodexSessionRow {
     path: PathBuf,
     summary: SessionSummary,
     parent_session_id: Option<String>,
+    forked_from_id: Option<String>,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
 }
@@ -235,6 +236,7 @@ fn parse_detail(path: &Path) -> Result<SessionDetail> {
 fn parse_session_row(path: &Path) -> Result<CodexSessionRow> {
     let mut summary = SummaryAccumulator::default();
     let mut parent_session_id = None;
+    let mut forked_from_id = None;
     let mut agent_nickname = None;
     let mut agent_role = None;
 
@@ -245,14 +247,23 @@ fn parse_session_row(path: &Path) -> Result<CodexSessionRow> {
         match crate::json_type(&value) {
             Some("session_meta") => {
                 let payload = &value["payload"];
-                summary.session_id = crate::json_string(payload, &["id"]);
-                summary.cwd = crate::json_string(payload, &["cwd"]);
-                summary.created_at = crate::json_string(payload, &["timestamp"])
-                    .and_then(|value| crate::parse_timestamp(&value))
-                    .or(summary.created_at);
-                summary.git_branch = crate::json_string(payload, &["git", "branch"])
+                summary.session_id = summary
+                    .session_id
+                    .or_else(|| crate::json_string(payload, &["id"]));
+                summary.cwd = summary
+                    .cwd
+                    .or_else(|| crate::json_string(payload, &["cwd"]));
+                summary.created_at = summary.created_at.or_else(|| {
+                    crate::json_string(payload, &["timestamp"])
+                        .and_then(|value| crate::parse_timestamp(&value))
+                });
+                summary.git_branch = summary
+                    .git_branch
+                    .or_else(|| crate::json_string(payload, &["git", "branch"]))
                     .or_else(|| crate::json_string(payload, &["git_branch"]))
                     .or_else(|| crate::json_string(payload, &["gitBranch"]));
+                forked_from_id =
+                    forked_from_id.or_else(|| crate::json_string(payload, &["forked_from_id"]));
                 parent_session_id = parent_session_id.or_else(|| {
                     crate::json_string(
                         payload,
@@ -301,6 +312,7 @@ fn parse_session_row(path: &Path) -> Result<CodexSessionRow> {
         path: path.to_path_buf(),
         summary: crate::build_summary(SourceApp::Codex, path, summary)?,
         parent_session_id,
+        forked_from_id,
         agent_nickname,
         agent_role,
     })
@@ -314,7 +326,9 @@ fn list_session_rows() -> Result<Vec<CodexSessionRow>> {
 }
 
 fn codex_sessions_root_timestamp() -> Result<i64> {
-    crate::file_modified_timestamp_millis(&root()?.join("sessions"))
+    Ok(crate::file_modified_timestamp_millis(
+        &root()?.join("sessions"),
+    )?)
 }
 
 fn build_family_index(rows: Vec<CodexSessionRow>) -> Vec<CodexSessionFamily> {
@@ -337,7 +351,11 @@ fn build_family_index(rows: Vec<CodexSessionRow>) -> Vec<CodexSessionFamily> {
                 left.summary
                     .created_at
                     .cmp(&right.summary.created_at)
-                    .then_with(|| left.summary.source_session_id.cmp(&right.summary.source_session_id))
+                    .then_with(|| {
+                        left.summary
+                            .source_session_id
+                            .cmp(&right.summary.source_session_id)
+                    })
             });
 
             let root = members
@@ -394,10 +412,7 @@ fn list_session_families() -> Result<Vec<CodexSessionFamily>> {
     Ok(family_index()?.families)
 }
 
-fn root_session_id(
-    row: &CodexSessionRow,
-    by_id: &HashMap<String, CodexSessionRow>,
-) -> String {
+fn root_session_id(row: &CodexSessionRow, by_id: &HashMap<String, CodexSessionRow>) -> String {
     let mut current_id = row.summary.source_session_id.clone();
     let mut parent_id = row.parent_session_id.clone();
     let mut visited = HashSet::from([current_id.clone()]);
@@ -437,12 +452,20 @@ fn family_summary(family: &CodexSessionFamily) -> SessionSummary {
 
     summary.transcript_path = family.root.path.display().to_string();
     summary.created_at = family_created_at(family);
-    summary.updated_at = family.root.summary.updated_at.max(Some(family_updated_at(family)));
+    summary.updated_at = family
+        .root
+        .summary
+        .updated_at
+        .max(Some(family_updated_at(family)));
     summary
 }
 
 fn family_created_at(family: &CodexSessionFamily) -> Option<i64> {
-    family.members.iter().filter_map(|row| row.summary.created_at).min()
+    family
+        .members
+        .iter()
+        .filter_map(|row| row.summary.created_at)
+        .min()
 }
 
 fn family_updated_at(family: &CodexSessionFamily) -> i64 {
@@ -462,21 +485,32 @@ fn family_source_paths(family: &CodexSessionFamily) -> Vec<String> {
         .collect()
 }
 
+fn family_member_display_name(row: &CodexSessionRow) -> String {
+    row.agent_nickname
+        .clone()
+        .or_else(|| row.agent_role.clone())
+        .unwrap_or_else(|| row.summary.title.clone())
+}
+
 fn family_agents(family: &CodexSessionFamily) -> Vec<SessionAgent> {
     family
         .members
         .iter()
-        .map(|row| SessionAgent {
-            session_id: row.summary.source_session_id.clone(),
-            label: if row.summary.source_session_id == family.root.summary.source_session_id {
+        .map(|row| {
+            let is_root = row.summary.source_session_id == family.root.summary.source_session_id;
+            let label = if is_root {
                 "主 Agent".to_string()
+            } else if row.forked_from_id.is_some() {
+                format!("{}(派生)", family_member_display_name(row))
             } else {
-                row.agent_nickname
-                    .clone()
-                    .or_else(|| row.agent_role.clone())
-                    .unwrap_or_else(|| row.summary.title.clone())
-            },
-            is_root: row.summary.source_session_id == family.root.summary.source_session_id,
+                format!("{}(子)", family_member_display_name(row))
+            };
+
+            SessionAgent {
+                session_id: row.summary.source_session_id.clone(),
+                label,
+                is_root,
+            }
         })
         .collect()
 }
@@ -492,9 +526,11 @@ fn cached_family_timeline<T: Clone>(
     updated_at: i64,
     extract: impl Fn(&CodexTimelineCacheEntry) -> Option<Vec<T>>,
 ) -> Result<Option<Vec<T>>> {
-    Ok(lock_timeline_cache()?
-        .get(cache_key)
-        .and_then(|entry| (entry.updated_at == updated_at).then(|| extract(entry)).flatten()))
+    Ok(lock_timeline_cache()?.get(cache_key).and_then(|entry| {
+        (entry.updated_at == updated_at)
+            .then(|| extract(entry))
+            .flatten()
+    }))
 }
 
 fn store_cached_family_timeline(
@@ -513,9 +549,9 @@ fn cached_messages_for_family(family: &CodexSessionFamily) -> Result<Vec<Session
     let cache_key = family.root.summary.source_session_id.clone();
     let updated_at = family_cache_timestamp(family)?;
 
-    if let Some(messages) = cached_family_timeline(&cache_key, updated_at, |entry| {
-        entry.messages.clone()
-    })? {
+    if let Some(messages) =
+        cached_family_timeline(&cache_key, updated_at, |entry| entry.messages.clone())?
+    {
         return Ok(messages);
     }
 
@@ -530,9 +566,9 @@ fn cached_events_for_family(family: &CodexSessionFamily) -> Result<Vec<SessionEv
     let cache_key = family.root.summary.source_session_id.clone();
     let updated_at = family_cache_timestamp(family)?;
 
-    if let Some(events) = cached_family_timeline(&cache_key, updated_at, |entry| {
-        entry.events.clone()
-    })? {
+    if let Some(events) =
+        cached_family_timeline(&cache_key, updated_at, |entry| entry.events.clone())?
+    {
         return Ok(events);
     }
 
@@ -581,11 +617,7 @@ fn load_messages_for_family(family: &CodexSessionFamily) -> Result<Vec<SessionMe
 
         let row_session_id = row.summary.source_session_id.clone();
         messages.extend(load_messages(&row.path)?.into_iter().map(|mut message| {
-            message.session_id = Some(
-                message
-                    .session_id
-                    .unwrap_or_else(|| row_session_id.clone()),
-            );
+            message.session_id = Some(message.session_id.unwrap_or_else(|| row_session_id.clone()));
             message
         }));
     }
@@ -602,7 +634,10 @@ fn load_messages_for_family(family: &CodexSessionFamily) -> Result<Vec<SessionMe
 fn load_events_for_family(family: &CodexSessionFamily) -> Result<Vec<SessionEvent>> {
     let mut events = Vec::new();
 
-    events.extend(subagent_lifecycle_events(&family.root.path, &family.members));
+    events.extend(subagent_lifecycle_events(
+        &family.root.path,
+        &family.members,
+    ));
 
     for row in &family.members {
         if row.summary.source_session_id != family.root.summary.source_session_id {
@@ -626,10 +661,7 @@ fn load_events_for_family(family: &CodexSessionFamily) -> Result<Vec<SessionEven
 }
 
 fn subagent_label(row: &CodexSessionRow) -> String {
-    row.agent_nickname
-        .clone()
-        .or_else(|| row.agent_role.clone())
-        .unwrap_or_else(|| "worker".to_string())
+    family_member_display_name(row)
 }
 
 fn subagent_marker_message(row: &CodexSessionRow) -> SessionMessage {
@@ -678,10 +710,7 @@ fn subagent_marker_event(row: &CodexSessionRow) -> SessionEvent {
     }
 }
 
-fn subagent_lifecycle_events(
-    root_path: &Path,
-    members: &[CodexSessionRow],
-) -> Vec<SessionEvent> {
+fn subagent_lifecycle_events(root_path: &Path, members: &[CodexSessionRow]) -> Vec<SessionEvent> {
     let by_id = members
         .iter()
         .map(|row| (row.summary.source_session_id.clone(), row))
@@ -767,7 +796,9 @@ fn subagent_lifecycle_events(
                         continue;
                     };
 
-                    let Ok(notification) = serde_json::from_str::<Value>(&trimmed[json_start..=json_end]) else {
+                    let Ok(notification) =
+                        serde_json::from_str::<Value>(&trimmed[json_start..=json_end])
+                    else {
                         continue;
                     };
                     let Some(child_id) = crate::json_string(&notification, &["agent_path"]) else {

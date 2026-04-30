@@ -10,9 +10,9 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::{
-    ContentBlock, SessionAgent, SessionDetail, SessionDetailOverview, SessionEvent, SessionEventPage,
-    SessionFileEntry, SessionMessage, SessionMessagePage, SessionSummary, SourceApp,
-    SummaryAccumulator, TimelineRecord,
+    ContentBlock, SessionAgent, SessionDetail, SessionDetailOverview, SessionEvent,
+    SessionEventPage, SessionFileEntry, SessionMessage, SessionMessagePage, SessionSummary,
+    SourceApp, SummaryAccumulator, TimelineRecord,
 };
 
 use super::{SessionExporter, SessionReader};

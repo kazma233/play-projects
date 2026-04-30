@@ -273,7 +273,7 @@ fn codex_ignores_agents_banner_when_picking_title() -> Result<()> {
                     }
                 ]
             }
-        })
+        }),
     ];
 
     write_jsonl(&transcript_path, &transcript)?;
@@ -308,7 +308,7 @@ fn claude_ignores_agents_banner_when_picking_title() -> Result<()> {
             "message": {
                 "content": "How do I list the current files?"
             }
-        })
+        }),
     ];
 
     write_jsonl(&session_file, &transcript)?;
@@ -364,7 +364,7 @@ fn codex_root_session_aggregates_subagent_sessions() -> Result<()> {
                     "role": "assistant",
                     "content": [{ "type": "output_text", "text": "Main answer" }]
                 }
-            })
+            }),
         ],
     )?;
 
@@ -407,7 +407,7 @@ fn codex_root_session_aggregates_subagent_sessions() -> Result<()> {
                     "role": "assistant",
                     "content": [{ "type": "output_text", "text": "Child answer" }]
                 }
-            })
+            }),
         ],
     )?;
 

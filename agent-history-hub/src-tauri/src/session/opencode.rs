@@ -11,8 +11,9 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    ContentBlock, SessionAgent, SessionDetail, SessionDetailOverview, SessionEvent, SessionEventPage,
-    SessionFileEntry, SessionMessage, SessionMessagePage, SessionSummary, SourceApp,
+    ContentBlock, SessionAgent, SessionDetail, SessionDetailOverview, SessionEvent,
+    SessionEventPage, SessionFileEntry, SessionMessage, SessionMessagePage, SessionSummary,
+    SourceApp,
 };
 
 use super::{SessionExporter, SessionReader};
@@ -489,18 +490,31 @@ fn cached_events_for_family(family: &OpenCodeSessionFamily) -> Result<Vec<Sessio
 
 fn count_family_records(member_ids: &[&str]) -> Result<(usize, usize)> {
     let connection = open_connection()?;
-    let placeholders: Vec<String> = member_ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect::<Vec<_>>();
+    let placeholders: Vec<String> = member_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>();
     let placeholders_joined = placeholders.join(",");
-    let params: Vec<Box<dyn rusqlite::types::ToSql>> = member_ids.iter().map(|id| Box::new(id.to_string()) as Box<dyn rusqlite::types::ToSql>).collect();
+    let params: Vec<Box<dyn rusqlite::types::ToSql>> = member_ids
+        .iter()
+        .map(|id| Box::new(id.to_string()) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-    let message_count: usize = connection.query_row(
-        &format!("SELECT COUNT(*) FROM message WHERE session_id IN ({placeholders_joined})"),
-        param_refs.as_slice(),
-        |row| row.get(0),
-    ).unwrap_or(0);
+    let message_count: usize = connection
+        .query_row(
+            &format!("SELECT COUNT(*) FROM message WHERE session_id IN ({placeholders_joined})"),
+            param_refs.as_slice(),
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
 
-    let or_clauses: Vec<String> = member_ids.iter().enumerate().map(|(i, _)| format!("session_id = ?{}", i + 1)).collect::<Vec<_>>();
+    let or_clauses: Vec<String> = member_ids
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("session_id = ?{}", i + 1))
+        .collect::<Vec<_>>();
     let or_joined = or_clauses.join(" OR ");
     let event_count: usize = connection.query_row(
         &format!(
